@@ -1,14 +1,8 @@
 """Tests for ttyscan._termcap."""
 
 import os
-<<<<<<< HEAD
-import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-=======
 from pathlib import Path
 from unittest.mock import patch
->>>>>>> 7795755 (Initial commit, new project)
 
 import pytest
 
@@ -19,10 +13,6 @@ from ttyscan._termcap import (
     _terminfo_to_termcap_str,
     build_termcap_entry,
     ensure_termcap,
-<<<<<<< HEAD
-    termcap_from_terminfo,
-=======
->>>>>>> 7795755 (Initial commit, new project)
 )
 from ttyscan._terminfo import _escape_value
 
@@ -161,60 +151,6 @@ class TestBuildTermcapEntry:
         assert entry == "e|XTGETTCAP-discovered terminal:"
 
 
-<<<<<<< HEAD
-class TestTermcapFromTerminfo:
-    def test_infocmp_found_success(self):
-        with patch("ttyscan._termcap.shutil.which", return_value="/usr/bin/infocmp"):
-            with patch("ttyscan._termcap.subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 0
-                mock_result.stdout = "myterm|My Terminal:\\\n\t:am:cm=\\E[%i%d;%dr:"
-                mock_run.return_value = mock_result
-                result = termcap_from_terminfo("myterm", Path("/tmp/ti"))
-                assert result == "myterm|My Terminal:\\\n\t:am:cm=\\E[%i%d;%dr:"
-
-    def test_infocmp_found_failure(self):
-        with patch("ttyscan._termcap.shutil.which", return_value="/usr/bin/infocmp"):
-            with patch("ttyscan._termcap.subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 1
-                mock_result.stdout = ""
-                mock_run.return_value = mock_result
-                result = termcap_from_terminfo("bad", Path("/tmp/ti"))
-                assert result is None
-
-    def test_infocmp_not_found(self):
-        with patch("ttyscan._termcap.shutil.which", return_value=None):
-            result = termcap_from_terminfo("xterm", Path("/tmp/ti"))
-            assert result is None
-
-    def test_infocmp_empty_output(self):
-        with patch("ttyscan._termcap.shutil.which", return_value="/usr/bin/infocmp"):
-            with patch("ttyscan._termcap.subprocess.run") as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 0
-                mock_result.stdout = ""
-                mock_run.return_value = mock_result
-                result = termcap_from_terminfo("xterm", Path("/tmp/ti"))
-                assert result is None
-
-    def test_infocmp_subprocess_error(self):
-        with patch("ttyscan._termcap.shutil.which", return_value="/usr/bin/infocmp"):
-            with patch("ttyscan._termcap.subprocess.run",
-                       side_effect=subprocess.SubprocessError):
-                result = termcap_from_terminfo("xterm", Path("/tmp/ti"))
-                assert result is None
-
-    def test_infocmp_os_error(self):
-        with patch("ttyscan._termcap.shutil.which", return_value="/usr/bin/infocmp"):
-            with patch("ttyscan._termcap.subprocess.run",
-                       side_effect=OSError):
-                result = termcap_from_terminfo("xterm", Path("/tmp/ti"))
-                assert result is None
-
-
-=======
->>>>>>> 7795755 (Initial commit, new project)
 class TestEnsureTermcap:
     def test_builder_success_same_as_env(self, monkeypatch):
         entry = "myterm|XTGETTCAP-discovered terminal::am:"
@@ -243,34 +179,6 @@ class TestEnsureTermcap:
             )
             assert result == f"export TERMCAP='{entry}'"
 
-<<<<<<< HEAD
-    def test_infocmp_not_called(self, monkeypatch):
-        """ensure_termcap uses build_termcap_entry only, never infocmp."""
-        monkeypatch.delenv("TERMCAP", raising=False)
-        entry = "myterm|XTGETTCAP-discovered terminal::am:"
-        with patch("ttyscan._termcap.build_termcap_entry", return_value=entry):
-            with patch("ttyscan._termcap.termcap_from_terminfo") as mock_infocmp:
-                result = ensure_termcap(
-                    "myterm", Path("/tmp/ti"),
-                    str_caps={"clear": "\x1b[H"},
-                    num_caps={"colors": 8},
-                    bool_caps={"am"},
-                )
-                assert result is not None
-                mock_infocmp.assert_not_called()
-
-    def test_both_fail(self, monkeypatch):
-        monkeypatch.delenv("TERMCAP", raising=False)
-        with patch("ttyscan._termcap.build_termcap_entry", return_value=""):
-            with patch("ttyscan._termcap.termcap_from_terminfo",
-                       return_value=None):
-                result = ensure_termcap(
-                    "myterm", Path("/tmp/ti"), {}, {}, set(),
-                )
-                assert result is None
-
-=======
->>>>>>> 7795755 (Initial commit, new project)
     def test_no_env_termcap(self, monkeypatch):
         monkeypatch.delenv("TERMCAP", raising=False)
         entry = "myterm|XTGETTCAP-discovered terminal::am:"

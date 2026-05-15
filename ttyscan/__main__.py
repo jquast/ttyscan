@@ -79,55 +79,62 @@ def generate_exports(
 
     tn = fast.capabilities["TN"]
     tn = _normalize_terminal_name(tn)
-    _verbose(f"terminal name: {tn}", verbose)
 
     # COLORTERM and TERM can be determined from the fast-path probe alone.
     exports: List[str] = []
 
     if colorterm_export := _check_colorterm(fast, force):
-        _verbose("exporting COLORTERM=truecolor", verbose)
         exports.append(colorterm_export)
 
     if term_export := _check_term(fast, force):
-        _verbose(f"exporting TERM={tn}", verbose)
         exports.append(term_export)
 
     if size := _detect_terminal_size(term, verbose):
-        rows, cols = size
-        if lines_cols_export := _check_lines_columns(rows, cols, force):
-            _verbose(f"exporting LINES={rows} COLUMNS={cols}", verbose)
+        rows, cols, source = size
+        # Reject bogus CPR results: 999 sentinel means the terminal did not
+        # clamp the far-corner cursor move; values less than the known
+        # terminal size mean CPR did not actually reach the edge.
+        if source != 'inband' and (
+            rows == 999 or cols == 999
+            or rows < term.height or cols < term.width
+        ):
+            _verbose(
+                f"rejecting CPR size {rows}x{cols} "
+                f"(term reports {term.height}x{term.width})",
+                verbose,
+            )
+        elif lines_cols_export := _check_lines_columns(rows, cols, term, force):
             exports.extend(lines_cols_export)
 
     # If the system already has a terminfo entry for this terminal and
     # neither force nor termcap was requested, skip the full capability
     # query -- nothing more to export.
     if not force and not termcap and has_terminfo(tn):
+        _verbose(f"XTGETTCAP supported, terminal: {tn}", verbose)
         _verbose("terminfo already available in system database", verbose)
         return exports
 
     # Full batch query for terminfo / termcap generation.
-    _verbose("requesting full capability set ...", verbose)
+    t0 = time.monotonic()
     tc = term.get_xtgettcap()
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
     if tc is None:
         _verbose("full XTGETTCAP query returned None", verbose)
         return []
-
-    _verbose("XTGETTCAP supported", verbose)
-    if verbose:
-        n_caps = len(tc.capabilities)
-        _verbose(f"received {n_caps} capabilities", verbose)
 
     jcaps = tc.make_jinxed_capabilities()
     str_caps = jcaps["str_caps"]
     num_caps = jcaps["num_caps"]
     bool_caps = jcaps["bool_caps"]
 
-    if verbose:
-        _verbose(
-            f"classified: {len(bool_caps)} bool, {len(num_caps)} num, "
-            f"{len(str_caps)} str caps",
-            verbose,
-        )
+    n_caps = len(tc.capabilities)
+    _verbose(
+        f"XTGETTCAP supported, terminal: {tn}; "
+        f"received {n_caps} caps "
+        f"({len(bool_caps)} bool, {len(num_caps)} num, {len(str_caps)} str) "
+        f"in {elapsed_ms}ms",
+        verbose,
+    )
 
     if not _has_meaningful_caps(str_caps, num_caps, bool_caps):
         _verbose(
@@ -141,22 +148,10 @@ def generate_exports(
         tn, str_caps, num_caps, bool_caps, force=force,
     )
     if terminfo_dir is not None:
+        _verbose(f"writing {terminfo_dir / tn[0] / tn}", verbose)
         terminfo_value = str(terminfo_dir)
         current_terminfo = os.environ.get("TERMINFO")
         if force or current_terminfo != terminfo_value:
-            if current_terminfo and current_terminfo != terminfo_value:
-                _verbose(
-                    f"TERMINFO changed: was {current_terminfo}, "
-                    f"now exporting {terminfo_value}",
-                    verbose,
-                )
-            elif current_terminfo:
-                _verbose(
-                    f"TERMINFO re-exporting (force): {terminfo_value}",
-                    verbose,
-                )
-            else:
-                _verbose(f"exporting TERMINFO={terminfo_value}", verbose)
             exports.append(f"export TERMINFO={terminfo_value}")
     else:
         _verbose("terminfo already available in system database", verbose)
@@ -166,7 +161,6 @@ def generate_exports(
             tn, terminfo_dir, str_caps, num_caps, bool_caps,
             force=force,
         ):
-            _verbose("exporting TERMCAP", verbose)
             exports.append(termcap_export)
 
     return exports
@@ -238,15 +232,11 @@ def _check_term(tc, force: bool = False) -> Optional[str]:
 
 def _detect_terminal_size(
     term: Terminal, verbose: bool = False,
-) -> Optional[Tuple[int, int]]:
+) -> Optional[Tuple[int, int, str]]:
     """Detect terminal dimensions using dual CPR with in-band resize preference.
 
-    Sends two CPR queries back-to-back with a ``move_yx(999, 999)`` in
-    between, then reads both ``CPR_RESPONSE`` keystrokes via :meth:`inkey`.
-    The first CPR captures the original cursor position (used to restore
-    the cursor afterwards), the second captures the clamped position which
-    yields the window dimensions.  In-band resize (DEC mode 2048) events
-    are preferred over CPR when received within the same read window.
+    Returns ``(rows, cols, source)`` where *source* is ``'inband'``,
+    ``'cpr'``, or ``'fallback_cpr'``, or ``None`` on failure.
     """
     def _dual_cpr_read(term, verbose):
         """Send dual CPR and read responses with inkey()."""
@@ -262,26 +252,6 @@ def _detect_terminal_size(
         term.stream.flush()
 
         # Read both CPR_RESPONSE keystrokes (and any in-band resize events).
-<<<<<<< HEAD
-        while cpr2 is None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                ks = term.inkey(timeout=remaining, capture_cpr=True)
-            except Exception:
-                break
-            if not ks:
-                break
-            if ks.name == 'CPR_RESPONSE':
-                yx = ks.cpr_yx
-                if cpr1 is None:
-                    cpr1 = yx
-                else:
-                    cpr2 = yx
-            # In-band resize events are automatically cached into
-            # term._preferred_size_cache by inkey().
-=======
         # inkey() requires cbreak mode to read raw escape sequences.
         with term.cbreak():
             while cpr2 is None:
@@ -302,7 +272,6 @@ def _detect_terminal_size(
                         cpr2 = yx
                 # In-band resize events are automatically cached into
                 # term._preferred_size_cache by inkey().
->>>>>>> 7795755 (Initial commit, new project)
 
         # Restore cursor position from first CPR response.
         if cpr1 is not None and cpr1 != (-1, -1):
@@ -316,15 +285,15 @@ def _detect_terminal_size(
         if term._preferred_size_cache is not None:
             rows = term._preferred_size_cache.ws_row
             cols = term._preferred_size_cache.ws_col
-            _verbose(f"size via in-band: {rows}x{cols}", verbose)
-            return rows, cols
+            _verbose(f"size via Mode 2048 in-band: {rows}x{cols}", verbose)
+            return rows, cols, 'inband'
 
         # Use second CPR for window dimensions.
         if cpr2 is not None and cpr2 != (-1, -1):
             y, x = cpr2
             rows, cols = y + 1, x + 1
             _verbose(f"size via dual CPR: {rows}x{cols}", verbose)
-            return rows, cols
+            return rows, cols, 'cpr'
 
         return None
 
@@ -346,7 +315,7 @@ def _detect_terminal_size(
         if (y, x) != (-1, -1):
             rows, cols = y + 1, x + 1
             _verbose(f"size via CPR: {rows}x{cols}", verbose)
-            return rows, cols
+            return rows, cols, 'fallback_cpr'
     except Exception:
         pass
 
@@ -355,9 +324,22 @@ def _detect_terminal_size(
 
 
 def _check_lines_columns(
-    rows: int, cols: int, force: bool = False,
+    rows: int, cols: int, term: Terminal, force: bool = False,
 ) -> Optional[List[str]]:
-    """Return LINES and COLUMNS export strings if they differ from current env."""
+    """Return LINES and COLUMNS export strings if they differ from current state.
+
+    Skips export when the detected dimensions match the terminal's current
+    size (as known by blessed via ioctl) and the environment is either
+    unset or already correct.  This avoids re-exporting values that are
+    already in effect.
+    """
+    if not force and (rows, cols) == (term.height, term.width):
+        env_lines = os.environ.get("LINES")
+        env_cols = os.environ.get("COLUMNS")
+        if (env_lines is None or env_lines == str(rows)) and \
+           (env_cols is None or env_cols == str(cols)):
+            return None
+
     exports = []
     env_lines = os.environ.get("LINES")
     env_cols = os.environ.get("COLUMNS")

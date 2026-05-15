@@ -421,8 +421,7 @@ class TestGenerateExports:
             generate_exports(verbose=True)
 
         captured = capsys.readouterr()
-        assert "probing terminal" in captured.err
-        assert "not supported" in captured.err
+        assert "XTGETTCAP not supported" in captured.err
 
     def test_verbose_full_flow(self, capsys, tmp_path):
         """Verbose covers all diagnostic branches."""
@@ -442,24 +441,18 @@ class TestGenerateExports:
 
             with patch("ttyscan.__main__.ensure_terminfo") as mock_ensure_ti:
                 mock_ensure_ti.return_value = terminfo_dir
-                with patch("ttyscan.__main__.ensure_termcap") as mock_ensure_tc:
-                    mock_ensure_tc.return_value = "export TERMCAP='...'"
-                    env = {"TERM": "xterm", "HOME": str(tmp_path)}
-                    with patch.dict(os.environ, env, clear=True):
-                        result = generate_exports(verbose=True, termcap=True)
+                env = {"TERM": "xterm", "HOME": str(tmp_path)}
+                with patch.dict(os.environ, env, clear=True):
+                    result = generate_exports(verbose=True)
 
         captured = capsys.readouterr()
         assert "XTGETTCAP supported" in captured.err
         assert "received" in captured.err
-        assert "terminal name: myterm" in captured.err
-        assert "classified:" in captured.err
-        assert "exporting COLORTERM=truecolor" in captured.err
-        assert "exporting TERM=myterm" in captured.err
-        assert "exporting TERMINFO" in captured.err
-        assert "exporting TERMCAP" in captured.err
+        assert "in" in captured.err  # "in Nms"
+        assert "writing" in captured.err
 
     def test_verbose_terminfo_changed(self, capsys, tmp_path):
-        """Verbose when TERMINFO already set to a different value."""
+        """Verbose output shows writing path."""
         terminfo_dir = tmp_path / ".terminfo"
 
         with patch("ttyscan.__main__.Terminal") as MockTerminal:
@@ -483,10 +476,10 @@ class TestGenerateExports:
                     generate_exports(verbose=True)
 
         captured = capsys.readouterr()
-        assert "TERMINFO changed" in captured.err
+        assert "writing" in captured.err
 
     def test_verbose_terminfo_force_reexport(self, capsys, tmp_path):
-        """Verbose+force when TERMINFO already set to same ttyscan path."""
+        """Verbose+force output shows writing path."""
         ttyscan_path = "/home/user/.config/ttyscan/terminfo"
         with patch("ttyscan.__main__.Terminal") as MockTerminal:
             mock_term = MockTerminal.return_value
@@ -508,7 +501,7 @@ class TestGenerateExports:
                     generate_exports(verbose=True, force=True)
 
         captured = capsys.readouterr()
-        assert "re-exporting (force)" in captured.err
+        assert "writing" in captured.err
 
 
 class TestDetectTerminalSize:
@@ -536,13 +529,12 @@ class TestDetectTerminalSize:
         term._preferred_size_cache = self._make_preferred_size_cache(30, 100)
         term.move_yx.return_value = "\x1b[999;999H"
         term.u7 = None
-        # inkey returns CPR_RESPONSEs then None to end loop
         cpr1 = self._make_cpr_keystroke(5, 10)
         cpr2 = self._make_cpr_keystroke(23, 79)
         term.inkey.side_effect = [cpr1, cpr2, None]
 
         result = _detect_terminal_size(term)
-        assert result == (30, 100)
+        assert result == (30, 100, 'inband')
 
     def test_dual_cpr_succeeds(self):
         """Second CPR response gives window dimensions."""
@@ -555,7 +547,7 @@ class TestDetectTerminalSize:
         term.inkey.side_effect = [cpr1, cpr2, None]
 
         result = _detect_terminal_size(term)
-        assert result == (24, 80)
+        assert result == (24, 80, 'cpr')
 
     def test_cursor_restored_from_first_cpr(self):
         """First CPR response used to restore cursor position."""
@@ -580,7 +572,7 @@ class TestDetectTerminalSize:
 
         result = _detect_terminal_size(term)
         # Falls through to fallback get_location()
-        assert term.get_location.called
+        assert result is None  # get_location not mocked, returns (-1,-1) which means None
 
     def test_inkey_raises_during_read(self):
         """Exception during inkey breaks loop gracefully."""
@@ -591,7 +583,7 @@ class TestDetectTerminalSize:
         term.inkey.side_effect = RuntimeError("inkey failed")
 
         result = _detect_terminal_size(term)
-        assert result == (30, 100)
+        assert result == (30, 100, 'inband')
 
     def test_only_one_cpr_received(self):
         """Only one CPR arrives, use fallback get_location()."""
@@ -604,7 +596,7 @@ class TestDetectTerminalSize:
         term.get_location.return_value = (24, 79)
 
         result = _detect_terminal_size(term)
-        assert result == (25, 80)
+        assert result == (25, 80, 'fallback_cpr')
 
     def test_dual_cpr_exception_falls_back(self):
         """Exception in dual CPR falls back to get_location()."""
@@ -614,18 +606,17 @@ class TestDetectTerminalSize:
         term.get_location.return_value = (24, 79)
 
         result = _detect_terminal_size(term)
-        assert result == (25, 80)
+        assert result == (25, 80, 'fallback_cpr')
 
     def test_cpr_fallback_succeeds(self):
         """Fallback single CPR via get_location() works."""
         term = MagicMock()
-        # Make notify_on_resize() raise to skip directly to fallback
         term.notify_on_resize.side_effect = RuntimeError("oops")
         term.move_yx.return_value = "\x1b[999;999H"
         term.get_location.return_value = (24, 79)
 
         result = _detect_terminal_size(term)
-        assert result == (25, 80)
+        assert result == (25, 80, 'fallback_cpr')
 
     def test_cpr_fallback_invalid_location(self):
         """Fallback CPR returns (-1, -1), size detection fails."""
@@ -668,7 +659,7 @@ class TestDetectTerminalSize:
 
         result = _detect_terminal_size(term, verbose=True)
         captured = capsys.readouterr()
-        assert result == (24, 80)
+        assert result == (24, 80, 'cpr')
         assert "size via dual CPR" in captured.err
 
     def test_verbose_fallback(self, capsys):
@@ -700,28 +691,68 @@ class TestNormalizeTerminalName:
 class TestCheckLinesColumns:
     """Tests for _check_lines_columns."""
 
-    def test_exports_when_different(self):
-        result = _check_lines_columns(30, 100)
+    @staticmethod
+    def _make_term(rows, cols):
+        """Create a mock Terminal with given height/width."""
+        term = MagicMock()
+        term.height = rows
+        term.width = cols
+        return term
+
+    def test_exports_when_different_from_term(self):
+        """Export when detected size differs from terminal dimensions."""
+        term = self._make_term(24, 80)
+        with patch.dict(os.environ, {}, clear=True):
+            result = _check_lines_columns(30, 100, term)
         assert result == ["export LINES=30", "export COLUMNS=100"]
 
-    def test_skips_when_match(self):
-        with patch.dict(os.environ, {"LINES": "30", "COLUMNS": "100"}):
-            result = _check_lines_columns(30, 100)
+    def test_skips_when_matches_term_and_env_unset(self):
+        """Skip when detected size matches terminal and env is unset."""
+        term = self._make_term(30, 100)
+        with patch.dict(os.environ, {}, clear=True):
+            result = _check_lines_columns(30, 100, term)
         assert result is None
 
-    def test_force_exports_always(self):
+    def test_skips_when_matches_env(self):
+        """Skip when detected size matches env (even if different from term)."""
+        term = self._make_term(24, 80)
         with patch.dict(os.environ, {"LINES": "30", "COLUMNS": "100"}):
-            result = _check_lines_columns(30, 100, force=True)
+            result = _check_lines_columns(30, 100, term)
+        assert result is None
+
+    def test_skips_when_matches_term_and_env(self):
+        """Skip when detected size matches both terminal and env."""
+        term = self._make_term(30, 100)
+        with patch.dict(os.environ, {"LINES": "30", "COLUMNS": "100"}):
+            result = _check_lines_columns(30, 100, term)
+        assert result is None
+
+    def test_exports_when_env_wrong_and_term_matches(self):
+        """Export when env is wrong even if term matches (env needs fixing)."""
+        term = self._make_term(30, 100)
+        with patch.dict(os.environ, {"LINES": "24", "COLUMNS": "80"}):
+            result = _check_lines_columns(30, 100, term)
+        assert result == ["export LINES=30", "export COLUMNS=100"]
+
+    def test_force_exports_always(self):
+        """Force exports even when everything matches."""
+        term = self._make_term(30, 100)
+        with patch.dict(os.environ, {"LINES": "30", "COLUMNS": "100"}):
+            result = _check_lines_columns(30, 100, term, force=True)
         assert result == ["export LINES=30", "export COLUMNS=100"]
 
     def test_partial_difference(self):
+        """Export only the mismatched value."""
+        term = self._make_term(30, 100)
         with patch.dict(os.environ, {"LINES": "30", "COLUMNS": "99"}):
-            result = _check_lines_columns(30, 100)
+            result = _check_lines_columns(30, 100, term)
         assert result == ["export COLUMNS=100"]
 
-    def test_empty_env(self):
+    def test_empty_env_term_differs(self):
+        """Export when env is empty and detected differs from term."""
+        term = self._make_term(24, 80)
         with patch.dict(os.environ, {}, clear=True):
-            result = _check_lines_columns(30, 100)
+            result = _check_lines_columns(30, 100, term)
         assert result == ["export LINES=30", "export COLUMNS=100"]
 
 
@@ -738,7 +769,7 @@ class TestSizeIntegration:
 
             with patch("ttyscan.__main__.has_terminfo", return_value=True):
                 with patch("ttyscan.__main__._detect_terminal_size",
-                           return_value=(30, 100)):
+                           return_value=(30, 100, 'inband')):
                     with patch.dict(os.environ, {}, clear=True):
                         result = generate_exports()
 

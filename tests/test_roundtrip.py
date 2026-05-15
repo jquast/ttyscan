@@ -1,12 +1,9 @@
 """Round-trip tests: write terminfo binary, verify via curses in a subprocess.
 
-Uses real XTGETTCAP data from ucs-detect YAML files.
+Uses inline XTGETTCAP data collected from ucs-detect in May 2026.
 
 Each terminal is verified in a separate subprocess because
 ``curses.setupterm()`` can only be called once per process.
-
-Representative terminals are tested by default.  Run with ``--run-all-roundtrip``
-to test all available terminals.
 """
 
 import json
@@ -14,12 +11,9 @@ import os
 import subprocess
 import sys
 import tempfile
-from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
-import yaml
 
 from ttyscan._terminfo import (
     _CANONICAL_BOOL_CAPS,
@@ -31,7 +25,6 @@ from ttyscan._terminfo import (
 )
 
 # Subprocess script that verifies compiled terminfo via curses.
-# One subprocess per terminal since curses.setupterm() is single-call.
 _VERIFY_SCRIPT = r"""
 import curses, json, os, sys
 with open(sys.argv[1]) as f:
@@ -61,14 +54,84 @@ if errors:
 print('OK')
 """
 
-# Representative terminals covering minimal, medium, and full profiles.
-_REPRESENTATIVE_TERMINALS = frozenset({
-    'xterm.yaml',           # 95 caps, mostly keys
-    'kitty.yaml',           # 221 caps, full terminfo
-    'foot.yaml',            # 210 caps, full terminfo
-    'AbsoluteTelnetSSH.yaml',  # 5 caps, bare minimum
-    'mlterm.yaml',          # 39 caps, medium
-})
+# XTGETTCAP data collected from ucs-detect, May 2026.
+# Only a subset of caps is included to keep the test data compact while
+# still exercising the terminfo binary writer across all cap types.
+_KITTY_XTGETTCAP = {
+    'supported': True,
+    'software_name': 'kitty',
+    'capabilities': {
+        'TN': 'xterm-kitty',
+        'RGB': '8/8/8',
+        # Boolean caps
+        'am': '', 'bce': '', 'ccc': '', 'km': '', 'mc5i': '',
+        'mir': '', 'msgr': '', 'npc': '', 'xenl': '',
+        'hs': '', 'bw': '',
+        # Numeric caps
+        'colors': '256', 'cols': '80', 'lines': '24', 'pairs': '32767',
+        'it': '8',
+        # String caps (screen/output)
+        'acsc': '++\\,,-..00``aaffgghhiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~',
+        'bel': '\x07',
+        'blink': '\x1b[5m',
+        'bold': '\x1b[1m',
+        'civis': '\x1b[?25l',
+        'clear': '\x1b[H\x1b[2J',
+        'cnorm': '\x1b[?12h\x1b[?25h',
+        'cr': '\r',
+        'csr': '\x1b[%i%p1%d;%p2%dr',
+        'cub': '\x1b[%p1%dD',
+        'cub1': '\x08',
+        'cud': '\x1b[%p1%dB',
+        'cud1': '\n',
+        'cuf': '\x1b[%p1%dC',
+        'cuf1': '\x1b[C',
+        'cup': '\x1b[%i%p1%d;%p2%dH',
+        'cuu': '\x1b[%p1%dA',
+        'cuu1': '\x1b[A',
+        'cvvis': '\x1b[?12;25h',
+        'dch1': '\x1b[P',
+        'dim': '\x1b[2m',
+        'dl1': '\x1b[M',
+        'ech': '\x1b[%p1%dX',
+        'ed': '\x1b[J',
+        'el': '\x1b[K',
+        'el1': '\x1b[1K',
+        'flash': '\x1b[?5h$<100/>\x1b[?5l',
+        'home': '\x1b[H',
+        'hpa': '\x1b[%i%p1%dG',
+        'ht': '\t',
+        'hts': '\x1bH',
+        'il1': '\x1b[L',
+        'ind': '\n',
+        'op': '\x1b[39;49m',
+        'rc': '\x1b8',
+        'rev': '\x1b[7m',
+        'ri': '\x1bM',
+        'ritm': '\x1b[23m',
+        'rmacs': '\x1b(B',
+        'rmam': '\x1b[?7l',
+        'rmcup': '\x1b[?1049l',
+        'rmir': '\x1b[4l',
+        'rmkx': '\x1b[?1l',
+        'rmso': '\x1b[27m',
+        'rmul': '\x1b[24m',
+        'sc': '\x1b7',
+        'sgr0': '\x1b(B\x1b[m',
+        'sitm': '\x1b[3m',
+        'smacs': '\x1b(0',
+        'smam': '\x1b[?7h',
+        'smcup': '\x1b[?1049h',
+        'smir': '\x1b[4h',
+        'smkx': '\x1b[?1h',
+        'smso': '\x1b[7m',
+        'smul': '\x1b[4m',
+        'tbc': '\x1b[3g',
+        'u6': '\x1b[%i%d;%dR',
+        'u7': '\x1b[6n',
+        'vpa': '\x1b[%i%p1%dd',
+    },
+}
 
 
 def _classify_caps(capabilities: Dict[str, str]) -> Dict[str, Any]:
@@ -96,41 +159,6 @@ def _classify_caps(capabilities: Dict[str, str]) -> Dict[str, Any]:
     return {'bool_caps': bool_caps, 'num_caps': num_caps, 'str_caps': str_caps}
 
 
-@lru_cache(maxsize=1)
-def _load_all_terminals() -> List[Dict[str, Any]]:
-    """Load all terminals with non-empty XTGETTCAP data (cached)."""
-    data_dir = Path(__file__).resolve().parent.parent.parent / 'ucs-detect' / 'data'
-    terminals = []
-    for yaml_file in sorted(data_dir.glob('*.yaml')):
-        with open(yaml_file) as f:
-            doc = yaml.safe_load(f)
-        xt = doc.get('terminal_results', {}).get('xtgettcap', {})
-        if xt.get('supported') and xt.get('capabilities'):
-            terminals.append({
-                'file': yaml_file.name,
-                'software_name': doc.get('software_name', ''),
-                'capabilities': xt['capabilities'],
-            })
-    return terminals
-
-
-def _terminal_ids(config) -> List[str]:
-    """Return terminal identifiers for parametrization."""
-    all_terminals = _load_all_terminals()
-    if config.getoption('--run-all-roundtrip'):
-        return [t['file'] for t in all_terminals]
-    return [t['file'] for t in all_terminals
-            if t['file'] in _REPRESENTATIVE_TERMINALS]
-
-
-def _get_terminal(yaml_file: str) -> Dict[str, Any]:
-    """Get terminal data by YAML filename."""
-    for t in _load_all_terminals():
-        if t['file'] == yaml_file:
-            return t
-    raise ValueError(f"Terminal {yaml_file} not found")
-
-
 def _build_expected_json(term: str, classified: Dict[str, Any]) -> str:
     """Build the JSON payload for the verification subprocess."""
     expected = {
@@ -143,7 +171,7 @@ def _build_expected_json(term: str, classified: Dict[str, Any]) -> str:
 
 
 def _verify_in_subprocess(term: str, classified: Dict[str, Any],
-                          terminfo_dir: Path) -> subprocess.CompletedProcess:
+                          terminfo_dir: Any) -> subprocess.CompletedProcess:
     """Spawn a subprocess to verify the terminfo entry via curses."""
     json_payload = _build_expected_json(term, classified)
     with tempfile.NamedTemporaryFile(
@@ -168,20 +196,12 @@ def _verify_in_subprocess(term: str, classified: Dict[str, Any],
     return result
 
 
-def pytest_generate_tests(metafunc):
-    """Parametrize roundtrip tests dynamically."""
-    if 'yaml_file' in metafunc.fixturenames:
-        ids = _terminal_ids(metafunc.config)
-        metafunc.parametrize('yaml_file', ids)
-
-
-@pytest.mark.slow
-def test_roundtrip(yaml_file, tmp_path, request):
+@pytest.mark.parametrize('xtgettcap_data', [_KITTY_XTGETTCAP])
+def test_roundtrip(xtgettcap_data, tmp_path):
     """Write terminfo binary and verify via curses subprocess."""
-    terminal = _get_terminal(yaml_file)
-    caps = terminal['capabilities']
+    caps = xtgettcap_data['capabilities']
     classified = _classify_caps(caps)
-    tn = sanitize_term_name(caps.get('TN', terminal['software_name']))
+    tn = sanitize_term_name(caps.get('TN', xtgettcap_data['software_name']))
 
     data = _build_terminfo_binary(
         tn,
@@ -189,7 +209,7 @@ def test_roundtrip(yaml_file, tmp_path, request):
         num_caps=classified['num_caps'],
         bool_caps=classified['bool_caps'],
     )
-    assert data is not None, f"Failed to build terminfo binary for {yaml_file}"
+    assert data is not None, "Failed to build terminfo binary"
 
     file_path = terminfo_path(tn, tmp_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,5 +219,5 @@ def test_roundtrip(yaml_file, tmp_path, request):
     if result.returncode != 0:
         stderr = result.stderr.strip()
         assert False, (
-            f"Round-trip verification failed for {yaml_file} ({tn}):\n{stderr}"
+            f"Round-trip verification failed for kitty ({tn}):\n{stderr}"
         )

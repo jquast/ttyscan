@@ -1,16 +1,28 @@
 [build-system]
 requires = ["flit_core >=3.11,<4"]
 build-backend = "flit_core.buildapi"
+keywords = [
+    "xtgettcap",
+    "curses",
+    "capability",
+    "terminfo",
+    "setupterm",
+    "colorterm",
+    "console",
+    "query",
+    "serial",
+    "ssh",
+    "telnet",
+    "terminal",
+    "tty",
+]
 
 [project]
 name = "ttyscan"
-version = "1.0.0"
-description = "Scan terminal capabilities via XTGETTCAP and emit shell exports"
+version = "0.0.1"
+description = " Queries a terminal emulator for its type, size and capabilities "
 requires-python = ">=3.8"
-dependencies = [
-    "blessed",
-    "jinxed >=1.5",
-]
+dependencies = ["blessed>=1.5"]
 
 [project.scripts]
 ttyscan = "ttyscan.__main__:main"
