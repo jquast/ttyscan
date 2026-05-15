@@ -1,8 +1,11 @@
 """Tests for ttyscan._terminfo."""
 
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,10 +23,73 @@ from ttyscan._terminfo import (
     sanitize_term_name,
     terminfo_installed,
     terminfo_path,
-    validate_terminfo,
-    verify_terminfo_via_curses,
     write_terminfo,
 )
+
+
+def validate_terminfo(term: str, base_dir: Path) -> Optional[str]:
+    """Validate a compiled terminfo entry using ``infocmp``.
+
+    Returns None on success, or an error message string on failure.
+    """
+    infocmp = shutil.which("infocmp")
+    if not infocmp:
+        return None  # cannot validate, but not a failure
+
+    file_path = terminfo_path(term, base_dir)
+    if not file_path.exists():
+        return f"terminfo file not found at {file_path}"
+
+    env = {**os.environ, "TERMINFO": str(base_dir)}
+    try:
+        result = subprocess.run(
+            [infocmp, "-1", term],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.stderr.strip() or f"infocmp failed with code {result.returncode}"
+        if not result.stdout.strip():
+            return "infocmp produced empty output"
+    except (subprocess.SubprocessError, OSError) as exc:
+        return str(exc)
+
+    return None  # success
+
+
+def verify_terminfo_via_curses(term: str, base_dir: Path) -> Optional[str]:
+    """Verify a compiled terminfo entry by spawning a subprocess that
+    calls ``curses.setupterm()`` with ``TERMINFO`` set to *base_dir*.
+
+    Returns None on success, or an error message string on failure.
+    """
+    check_script = (
+        f"import curses, os, sys\n"
+        f"os.environ['TERMINFO'] = {str(base_dir)!r}\n"
+        f"try:\n"
+        f"    curses.setupterm({term!r})\n"
+        f"    sys.exit(0)\n"
+        f"except Exception as e:\n"
+        f"    print(str(e), file=sys.stderr)\n"
+        f"    sys.exit(1)\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", check_script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.stderr.strip() or "setupterm failed"
+    except (subprocess.SubprocessError, OSError) as exc:
+        return str(exc)
+
+    return None
 
 
 class TestSanitizeTermName:
@@ -594,20 +660,3 @@ class TestEnsureTerminfo:
                         "myt", {"clear": "\x1b[H"}, {}, set(),
                     )
         assert result == dest
-
-    def test_verification_warning_on_failure(self, tmp_path, capsys):
-        dest = tmp_path / "ttyscan_terminfo"
-
-        with patch("ttyscan._terminfo.has_terminfo", return_value=False):
-            with patch("ttyscan._terminfo._ttyscan_terminfo_dir",
-                       return_value=dest):
-                with patch("ttyscan._terminfo.verify_terminfo_via_curses",
-                           return_value="setupterm failed"):
-                    with patch.dict(os.environ, {}, clear=True):
-                        result = ensure_terminfo(
-                            "myt", {"clear": "\x1b[H"}, {}, set(),
-                        )
-        assert result is not None
-        captured = capsys.readouterr()
-        assert "warning" in captured.err
-        assert "setupterm failed" in captured.err

@@ -257,7 +257,7 @@ class TestGenerateExports:
             mock_term.get_xtgettcap.return_value = tc
 
             with patch.dict(os.environ, {}, clear=True):
-                # no TERM in env → _check_term will export
+                # no TERM in env -> _check_term will export
                 result = generate_exports()
 
             assert "export COLORTERM=truecolor" in result

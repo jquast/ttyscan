@@ -114,17 +114,28 @@ that `setupterm(3)`_ may negotiate for ``XTGETTCAP`` at some point in the future
 Scope
 -----
 
-At time of this writing (May 2026), *full* terminal capability transmission with ``XTGETTCAP`` is
-supported by contour, foot_, ghostty_, iterm2_, kitty_, rio_, and wezterm_.  ``XTGETTCAP`` is the
-only protocol capable of forwarding raw `terminfo(5)`_ capability strings.  alacritty_ staunchly
-refuses to support ``XTGETTCAP`` in any capacity, while other non-supporting terminals appear to be
-open to improvement.
+At time of this writing (May 2026), the ucs-detect_ dataset of 42 terminals shows three categories
+of support for ``XTGETTCAP``:
 
-Terminals that do not support ``XTGETTCAP`` terminal *output* capability strings include: alacritty,
-tmux, screen, Konsole, PuTTY, rxvt-unicode, mintty, kitty, xterm.js, st, and Apple Terminal.  For
-these, ttyscan produces mostly no output. Some terminals, like xterm, support only keyboard input
-capabilities but not output capabilities, so no terminfo file is made, although their $TERM is
-likely to be found on any remote system or otherwise be conforming with their described $TERM.
+- **Full** ``XTGETTCAP`` capability support: contour_, foot_, ghostty_, kitty_, rio, and wezterm
+  transmit their complete terminfo boolean, numeric, and string capabilities via XTGETTCAP_.
+
+  *ttyscan* produces terminfo files for only these terminals.  *ttyscan* may discover preferred
+  ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
+
+- **Partial** ``XTGETTCAP`` capability support: XTerm_, iterm2, mlterm, AbsoluteTelnet/SSH, GNOME
+  Terminal, LXTerminal, terminator, termit, and xfce4-terminal report only ``TN``, ``Co``, and
+  ``RGB``. XTerm_ supports keyboard input sequences but does not transmit the other capabilities
+  required to rebuild a complete terminal capability description.
+
+  *ttyscan* may discover preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
+
+- **None**: alacritty (refuses: `alacritty/vte#98`_, tracked: `alacritty/alacritty#7268`_), bobcat,
+  cmd.exe, ConEmu, cool-retro-term, Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux
+  fbdev, mintty, PuTTY, QTerminal, rxvt-unicode, screen, securecrt, st, Tabby, Apple Terminal,
+  Terminal.exe (planned: `microsoft/terminal#17735`_), terminology, tmux (passthrough:
+  `tmux/tmux#3755`_), libvterm, VS Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_),
+  weston-terminal, and zutty.
 
 Architecture
 ------------
@@ -152,7 +163,7 @@ Details
 
 The use of ``XTGETTCAP`` is best described by foot_:
 
-  ``XTGETTCAP`` is an escape sequence initially introduced by XTerm, and also implemented (and extended,
+  ``XTGETTCAP`` is an escape sequence initially introduced by XTerm_, and also implemented (and extended,
   to some degree) by Kitty.
  
   Applications using this feature do not need to use the classic, file-based, terminfo definition.
@@ -186,6 +197,8 @@ values when they differ.
 .. _kitty: https://sw.kovidgoyal.net/kitty/kittens/query_terminal/
 .. _ghostty: https://mitchellh.com/writing/ghostty-devlog-004
 .. _alacritty: https://github.com/alacritty/vte/issues/98
+.. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
+.. _ucs-detect: https://github.com/jquast/ucs-detect
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _blessed: https://pypi.org/project/blessed/
 .. _foot: https://codeberg.org/dnkl/foot#xtgettcap
@@ -195,6 +208,11 @@ values when they differ.
 .. _`sshd_config(5)`: https://linux.die.net/man/5/sshd_config
 .. _`terminfo(5)`: https://linux.die.net/man/5/terminfo
 .. _XTGETTCAP specification: https://gitlab.freedesktop.org/terminal-wg/specifications/-/merge_requests/7
+.. _`xtermjs/xterm.js#4107`: https://github.com/xtermjs/xterm.js/issues/4107
+.. _`microsoft/terminal#17735`: https://github.com/microsoft/terminal/issues/17735
+.. _`KDE#507017`: https://bugs.kde.org/show_bug.cgi?id=507017
+.. _`tmux/tmux#3755`: https://github.com/tmux/tmux/issues/3755
+.. _`alacritty/alacritty#7268`: https://github.com/alacritty/alacritty/issues/7268
 
 .. |pypi_downloads| image:: https://img.shields.io/pypi/dm/ttyscan.svg?logo=pypi
     :alt: Downloads

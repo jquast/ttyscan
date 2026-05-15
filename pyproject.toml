@@ -1,6 +1,14 @@
 [build-system]
-requires = ["flit_core >=3.11,<4"]
-build-backend = "flit_core.buildapi"
+build-backend = "hatchling.build"
+requires = [ "hatchling" ]
+
+[project]
+name = "ttyscan"
+version = "0.0.1"
+description = "Queries a terminal emulator for its type, size and capabilities"
+readme = "README.rst"
+requires-python = ">=3.8"
+dependencies = ["blessed>=1.5"]
 keywords = [
     "xtgettcap",
     "curses",
@@ -16,16 +24,41 @@ keywords = [
     "terminal",
     "tty",
 ]
-
-[project]
-name = "ttyscan"
-version = "0.0.1"
-description = " Queries a terminal emulator for its type, size and capabilities "
-requires-python = ">=3.8"
-dependencies = ["blessed>=1.5"]
+license = "MIT"
+license-files = [ "LICENSE" ]
+authors = [
+  { name = "Jeff Quast", email = "contact@jeffquast.com" },
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Natural Language :: English",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Terminals",
+]
 
 [project.scripts]
 ttyscan = "ttyscan.__main__:main"
 
-[tool.flit.sdist]
-include = ["ttyscan/"]
+[project.urls]
+Homepage = "https://github.com/jquast/ttyscan"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/ttyscan/*.py",
+  "/tests/*.py",
+  "/README.rst",
+  "/LICENSE",
+  "/bin/**",
+  "/.gitignore",
+]

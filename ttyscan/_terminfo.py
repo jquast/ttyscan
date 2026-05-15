@@ -9,7 +9,6 @@ import re
 import shutil
 import struct
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -254,71 +253,6 @@ def _pack_short_le(buf: bytearray, offset: int, value: int) -> None:
     buf[offset:offset + 2] = packed
 
 
-def validate_terminfo(term: str, base_dir: Path) -> Optional[str]:
-    """Validate a compiled terminfo entry using ``infocmp``.
-
-    Returns None on success, or an error message string on failure.
-    """
-    infocmp = shutil.which("infocmp")
-    if not infocmp:
-        return None  # cannot validate, but not a failure
-
-    file_path = terminfo_path(term, base_dir)
-    if not file_path.exists():
-        return f"terminfo file not found at {file_path}"
-
-    env = {**os.environ, "TERMINFO": str(base_dir)}
-    try:
-        result = subprocess.run(
-            [infocmp, "-1", term],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=env,
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.stderr.strip() or f"infocmp failed with code {result.returncode}"
-        if not result.stdout.strip():
-            return "infocmp produced empty output"
-    except (subprocess.SubprocessError, OSError) as exc:
-        return str(exc)
-
-    return None  # success
-
-
-def verify_terminfo_via_curses(term: str, base_dir: Path) -> Optional[str]:
-    """Verify a compiled terminfo entry by spawning a subprocess that
-    calls ``curses.setupterm()`` with ``TERMINFO`` set to *base_dir*.
-
-    Returns None on success, or an error message string on failure.
-    """
-    check_script = (
-        f"import curses, os, sys\n"
-        f"os.environ['TERMINFO'] = {str(base_dir)!r}\n"
-        f"try:\n"
-        f"    curses.setupterm({term!r})\n"
-        f"    sys.exit(0)\n"
-        f"except Exception as e:\n"
-        f"    print(str(e), file=sys.stderr)\n"
-        f"    sys.exit(1)\n"
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", check_script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode != 0:
-            return result.stderr.strip() or "setupterm failed"
-    except (subprocess.SubprocessError, OSError) as exc:
-        return str(exc)
-
-    return None
-
-
 def terminfo_path(term: str, base_dir: Path) -> Path:
     """Return the expected path of a compiled terminfo entry."""
     return base_dir / term[0] / term
@@ -402,18 +336,5 @@ def ensure_terminfo(
 
     if not installed:
         return None
-
-    # Validate via infocmp (informational only, failure is non-fatal)
-    _ = validate_terminfo(safe_term, dest_dir)
-
-    # Verify via curses in a subprocess
-    err = verify_terminfo_via_curses(safe_term, dest_dir)
-    if err:
-        file_path = terminfo_path(safe_term, dest_dir)
-        print(
-            f"ttyscan: warning: terminfo installed at {file_path}, "
-            f"but curses.setupterm('{safe_term}') failed: {err}",
-            file=sys.stderr,
-        )
 
     return dest_dir
