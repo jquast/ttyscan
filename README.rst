@@ -84,6 +84,10 @@ CLI Arguments
       -f, --force    Force export of all values even if unchanged
       -t, --termcap  Also export TERMCAP value
 
+*ttyscan* saves a `terminfo(5)`_ file to $XDG_CONFIG_HOME/ttyscan/terminfo or
+~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
+previous executions, unless ``--force`` argument is used.
+
 Installation
 ------------
 
@@ -96,20 +100,23 @@ Installation
 Motive
 ------
 
-Naturally, transferring your ``.terminfo`` folder to a remote machine is the best solution.
-Enterprise systems, bastion hosts, cloud systems, web consoles, hypervisors, radio, and serial ports
-however can be a challenging place or protocol layer to deploy terminfo files.
+Naturally, transferring your ``$HOME/.terminfo`` folder to a remote machine is the best solution.
 
-Some workarounds include exporting a generally-compatible ``TERM=xterm-256color`` or ``vt220``  with
-sometimes minor corruption of screen output or missed interpretation of keyboard input like
-backspace or delete or small reduction of features, like italic or underlined text or number of
+However, enterprise systems, bastion hosts, cloud systems, web consoles, hypervisors, radio, and
+serial ports can be challenging places or protocol layers through which to deploy terminfo files.
+
+Some workarounds include exporting a generally-compatible ``TERM=xterm-256color`` or ``xterm`` with
+sometimes minor corruption of screen output, missed interpretation of keyboard input such as
+backspace or delete, or a small reduction of features such as italic or underlined text or number of
 colors.
 
-And so **this tool is not often needed** except for the very serious terminal connoisseur.  It
-serves as a demonstration: that terminal capability strings can be transferred using XTGETTCAP_ for
-many modern terminals, and that a `terminfo(5)`_ and `termcap(5)`_ files and environment values may
-be automatically configured.  It is hoped that this utility is not commonly used or required, and
-that `setupterm(3)`_ may negotiate for ``XTGETTCAP`` at some point in the future.
+**And so this tool is not often needed** except for the **very serious** terminal connoisseur.
+
+It serves as a demonstration: that a full terminal capability database *can* be transferred using
+XTGETTCAP_ for many modern terminals, supporting modern `terminfo(5)`_ and legacy `termcap(5)`_.  It
+
+My hope is that `setupterm(3)`_ may negotiate with full XTGETTCAP_ support at some point in the
+future, and that this utility is not commonly used or required!
 
 Scope
 -----
@@ -120,15 +127,20 @@ of support for ``XTGETTCAP``:
 - **Full** ``XTGETTCAP`` capability support: contour_, foot_, ghostty_, kitty_, rio, and wezterm
   transmit their complete terminfo boolean, numeric, and string capabilities via XTGETTCAP_.
 
-  *ttyscan* produces terminfo files for only these terminals.  *ttyscan* may discover preferred
-  ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
+  *ttyscan* produces terminfo files for only these terminals.  *ttyscan* may also discover a
+  preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
 
 - **Partial** ``XTGETTCAP`` capability support: XTerm_, iterm2, mlterm, AbsoluteTelnet/SSH, GNOME
   Terminal, LXTerminal, terminator, termit, and xfce4-terminal report only ``TN``, ``Co``, and
-  ``RGB``. XTerm_ supports keyboard input sequences but does not transmit the other capabilities
-  required to rebuild a complete terminal capability description.
+  ``RGB``.
 
-  *ttyscan* may discover preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
+  *ttyscan* may only discover preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from
+  ``RGB``.
+
+  XTerm_ supports only keyboard sequences in addition to ``TN``, ``Co``, and ``RGB``. It does not
+  report *all* capabilities, and so a `terminfo(5)`_ entry cannot be built. However,
+  ``TERM=xterm-256color`` and ``TERM=xterm`` are the most ubiquitous terminal name, you should be
+  just fine.
 
 - **None**: alacritty (refuses: `alacritty/vte#98`_, tracked: `alacritty/alacritty#7268`_), bobcat,
   cmd.exe, ConEmu, cool-retro-term, Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux
@@ -144,9 +156,10 @@ An easy-to-deploy variant of this program would be better created as **one singl
 python script, without any 3rd party requirements or support for windows. This may be done in the
 future if it appears useful enough.
 
-*ttyscan* currently carries some unnecessary dependencies: only a very small subset of blessed_ and
-jinxed_ are used, and wcwidth_ isn't even used at all!  These "middle-weight" dependencies are used
-to reduce the size and complexity of this demonstration code.
+*ttyscan* currently carries some unnecessary dependencies: only a very small subset of blessed_
+is used, while its transitive dependencies jinxed_ and wcwidth_ aren't used at all.  These
+"middle-weight" dependencies are used to reduce the size and complexity of this demonstration
+code.
 
 *ttyscan* uses the following,
 
@@ -154,7 +167,7 @@ to reduce the size and complexity of this demonstration code.
 - ``RGB`` is used to correct ``COLORTERM`` when unmatched.
 - all capability strings, keyboard and screen, when provided by ``XTGETTCAP``.
 - DEC Private Mode 2048 (In-Band Resize) to determine the window size
-- Or failing that, Cursor Position Report like XTerm's `resize.c
+- Or failing that, using Cursor Position Report sequence like done in XTerm's `resize.c
   <https://github.com/joejulian/xterm/blob/master/resize.c>`_
 - blessed_ library for all Terminal interaction and capability detection
 
@@ -198,16 +211,21 @@ values when they differ.
 .. _ghostty: https://mitchellh.com/writing/ghostty-devlog-004
 .. _alacritty: https://github.com/alacritty/vte/issues/98
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
-.. _ucs-detect: https://github.com/jquast/ucs-detect
+.. _ucs-detect: https://ucs-detect.readthedocs.io/results.html#terminal-capabilities
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
-.. _blessed: https://pypi.org/project/blessed/
+.. _blessed: https://github.com/jquast/blessed
+.. _jinxed: https://github.com/Rockhopper-Technologies/jinxed
+.. _wcwidth: https://github.com/jquast/wcwidth
+.. _contour: https://github.com/contour-terminal/contour
+.. _XTerm: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
+.. _XTGETTCAP: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
 .. _foot: https://codeberg.org/dnkl/foot#xtgettcap
 .. _ncurses: https://invisible-island.net/ncurses/
 .. _`setupterm(3)`: https://linux.die.net/man/3/setupterm
 .. _`ssh_config(5)`: https://linux.die.net/man/5/ssh_config
 .. _`sshd_config(5)`: https://linux.die.net/man/5/sshd_config
 .. _`terminfo(5)`: https://linux.die.net/man/5/terminfo
-.. _XTGETTCAP specification: https://gitlab.freedesktop.org/terminal-wg/specifications/-/merge_requests/7
+.. _`termcap(5)`: https://linux.die.net/man/5/termcap
 .. _`xtermjs/xterm.js#4107`: https://github.com/xtermjs/xterm.js/issues/4107
 .. _`microsoft/terminal#17735`: https://github.com/microsoft/terminal/issues/17735
 .. _`KDE#507017`: https://bugs.kde.org/show_bug.cgi?id=507017
