@@ -1,9 +1,14 @@
 """Tests for ttyscan._termcap."""
 
 import os
+<<<<<<< HEAD
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+=======
+from pathlib import Path
+from unittest.mock import patch
+>>>>>>> 7795755 (Initial commit, new project)
 
 import pytest
 
@@ -14,7 +19,10 @@ from ttyscan._termcap import (
     _terminfo_to_termcap_str,
     build_termcap_entry,
     ensure_termcap,
+<<<<<<< HEAD
     termcap_from_terminfo,
+=======
+>>>>>>> 7795755 (Initial commit, new project)
 )
 from ttyscan._terminfo import _escape_value
 
@@ -153,6 +161,7 @@ class TestBuildTermcapEntry:
         assert entry == "e|XTGETTCAP-discovered terminal:"
 
 
+<<<<<<< HEAD
 class TestTermcapFromTerminfo:
     def test_infocmp_found_success(self):
         with patch("ttyscan._termcap.shutil.which", return_value="/usr/bin/infocmp"):
@@ -204,6 +213,8 @@ class TestTermcapFromTerminfo:
                 assert result is None
 
 
+=======
+>>>>>>> 7795755 (Initial commit, new project)
 class TestEnsureTermcap:
     def test_builder_success_same_as_env(self, monkeypatch):
         entry = "myterm|XTGETTCAP-discovered terminal::am:"
@@ -232,6 +243,7 @@ class TestEnsureTermcap:
             )
             assert result == f"export TERMCAP='{entry}'"
 
+<<<<<<< HEAD
     def test_infocmp_not_called(self, monkeypatch):
         """ensure_termcap uses build_termcap_entry only, never infocmp."""
         monkeypatch.delenv("TERMCAP", raising=False)
@@ -257,6 +269,8 @@ class TestEnsureTermcap:
                 )
                 assert result is None
 
+=======
+>>>>>>> 7795755 (Initial commit, new project)
     def test_no_env_termcap(self, monkeypatch):
         monkeypatch.delenv("TERMCAP", raising=False)
         entry = "myterm|XTGETTCAP-discovered terminal::am:"

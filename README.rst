@@ -1,7 +1,7 @@
 | |pypi_downloads| |codecov| |windows| |linux| |mac| |bsd|
 
-.. note:: This software is not yet released! Although it does not require, it best integrates with
-   the next release of Blessed (1.40), in review: https://github.com/jquast/blessed/pull/375
+.. note:: This software is not yet released! It best integrates with the next release of
+   Blessed (1.40), in review: https://github.com/jquast/blessed/pull/375
 
 ttyscan
 =======
@@ -56,9 +56,9 @@ Some workarounds include exporting a generally compatible ``TERM=xterm-256color`
 even ``ansi`` with some corruption of a small amount of screen output or keyboard input sequences.
 For example, backspace and delete may not detect.
 
-*ttyscan* acts as a compatibility layer, creating the missing `terminfo(5)` file using the
-XTGETTCAP_ protocol when available, and suggests a ``TERMINFO`` for export, allowing legacy calls to
-curses `setupterm(3)`_ to succeed::
+*ttyscan* acts as a compatibility layer, creating the missing `terminfo(5)` file using
+XTGETTCAP_ when available, and exports ``TERMINFO`` so that legacy calls to curses
+`setupterm(3)`_ succeed::
 
        $ ttyscan
 
@@ -81,13 +81,13 @@ accepted by all servers, or supported or forwarded by their protocols.  Some exa
 
 - ssh does not forward ``COLORTERM`` unless configured using ``SendEnv`` in `ssh_config(5)`_ and
   ``AcceptEnv`` in `sshd_config(5)`_.
-- serial does not forward any.  ``TERM`` is defined by `agetty(8)`_ configuration, for example.
+- serial does not forward any; ``TERM`` is defined by host `agetty(8)`_ configuration, for example.
 - rlogin can forward all but ``COLORTERM``.
-- telnet can forward all, but exact capability may vary by software.
+- telnet can forward all, but IAC NAWS and NEW-ENVIRON capability varies by software.
+- websocket cannot forward any without customization, often used in-browser.
 
 *ttyscan* detects when these variables are unset or do not match the values detected using
-XTGETTCAP_, and DEC Private Mode 2048 In-Band Resize Notification and
-and re-exports them.
+XTGETTCAP_, and DEC Private Mode 2048 In-Band Resize Notification, and re-exports them.
 
 Details
 -------

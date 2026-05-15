@@ -262,6 +262,7 @@ def _detect_terminal_size(
         term.stream.flush()
 
         # Read both CPR_RESPONSE keystrokes (and any in-band resize events).
+<<<<<<< HEAD
         while cpr2 is None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -280,6 +281,28 @@ def _detect_terminal_size(
                     cpr2 = yx
             # In-band resize events are automatically cached into
             # term._preferred_size_cache by inkey().
+=======
+        # inkey() requires cbreak mode to read raw escape sequences.
+        with term.cbreak():
+            while cpr2 is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    ks = term.inkey(timeout=remaining, capture_cpr=True)
+                except Exception:
+                    break
+                if not ks:
+                    break
+                if ks.name == 'CPR_RESPONSE':
+                    yx = ks.cpr_yx
+                    if cpr1 is None:
+                        cpr1 = yx
+                    else:
+                        cpr2 = yx
+                # In-band resize events are automatically cached into
+                # term._preferred_size_cache by inkey().
+>>>>>>> 7795755 (Initial commit, new project)
 
         # Restore cursor position from first CPR response.
         if cpr1 is not None and cpr1 != (-1, -1):

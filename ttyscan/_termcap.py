@@ -1,14 +1,18 @@
 """Build and export termcap entries."""
 
 import os
+<<<<<<< HEAD
 import shutil
 import subprocess
+=======
+>>>>>>> 7795755 (Initial commit, new project)
 from pathlib import Path
 from typing import Dict, Optional, Set
 
 from ._terminfo import _escape_value
 
 
+<<<<<<< HEAD
 def termcap_from_terminfo(term: str, terminfo_dir: Path) -> Optional[str]:
     """Convert an installed terminfo entry to a termcap entry via ``infocmp -C``.
 
@@ -34,6 +38,8 @@ def termcap_from_terminfo(term: str, terminfo_dir: Path) -> Optional[str]:
     return None
 
 
+=======
+>>>>>>> 7795755 (Initial commit, new project)
 def build_termcap_entry(
     term: str,
     str_caps: Dict[str, str],
