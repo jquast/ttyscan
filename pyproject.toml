@@ -1,0 +1,19 @@
+[build-system]
+requires = ["flit_core >=3.11,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "ttyscan"
+version = "1.0.0"
+description = "Scan terminal capabilities via XTGETTCAP and emit shell exports"
+requires-python = ">=3.8"
+dependencies = [
+    "blessed",
+    "jinxed >=1.5",
+]
+
+[project.scripts]
+ttyscan = "ttyscan.__main__:main"
+
+[tool.flit.sdist]
+include = ["ttyscan/"]
