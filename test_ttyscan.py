@@ -424,11 +424,13 @@ def test_write_all_none_fd():
 # Canned XTGETTCAP responses for PTY tests.
 _XT_RESP = {
     "tn_xterm": b"\x1bP1+r544e=787465726d\x1b\\",
+    "tn_nonexist": b"\x1bP1+r544e=6e6f6e6578697374\x1b\\",
     "colors_256": b"\x1bP1+r636f6c6f7273=323536\x1b\\",
     "clear": b"\x1bP1+r636c656172=1b5b481b5b324a\x1b\\",
     "am": b"\x1bP1+r616d\x1b\\",
     "cols_80": b"\x1bP1+r636f6c73=3830\x1b\\",
     "lines_24": b"\x1bP1+r6c696e6573=3234\x1b\\",
+    "rgb_8_8_8": b"\x1bP1+r524742=382f382f38\x1b\\",
 }
 _CPR_31_128 = b"\x1b[31;128R"
 _CPR_5_10 = b"\x1b[5;10R"
@@ -461,6 +463,40 @@ _RESIZE_31_128 = b"\x1b[48;31;128;0;0t"
      _XT_RESP["tn_xterm"] + _CPR_31_128,
      ["export TERM=xterm"],
      ["export TERMINFO=", "export TERMCAP=", "export LINES=", "export COLUMNS="]),
+    # XTGETTCAP not supported: empty response, no exports
+    ("-vft",
+     b"",
+     ["XTGETTCAP not supported by this terminal"],
+     ["export TERM=", "export TERMINFO=", "export TERMCAP=",
+      "export LINES=", "export COLUMNS="]),
+    # no TN capability in response
+    ("-vft",
+     _XT_RESP["colors_256"] + _CPR_31_128,
+     ["no TN (terminal name) capability"],
+     ["export TERM=", "export TERMINFO=", "export TERMCAP=",
+      "export LINES=", "export COLUMNS="]),
+    # RGB=8/8/8 triggers COLORTERM=truecolor export
+    ("-vft",
+     _XT_RESP["tn_xterm"] + _CPR_31_128
+     + _XT_RESP["rgb_8_8_8"] + _XT_RESP["colors_256"]
+     + _XT_RESP["clear"] + _XT_RESP["am"]
+     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     ["export COLORTERM=truecolor", "export TERM=xterm",
+      "export TERMINFO=", "export TERMCAP="],
+     []),
+    # bare-minimum caps (only TN+colors): skips TERMINFO/TERMCAP
+    ("-vft",
+     _XT_RESP["tn_xterm"] + _CPR_31_128
+     + _XT_RESP["colors_256"] + _CPR_31_128,
+     ["export TERM=xterm"],
+     ["export TERMINFO=", "export TERMCAP=", "export COLORTERM="]),
+    # nonexistent TN (has_terminfo=False): full query path, exports TERMINFO
+    ("-v",
+     _XT_RESP["tn_nonexist"] + _CPR_31_128
+     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
+     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     ["export TERM=nonexist", "export TERMINFO="],
+     ["export TERMCAP="]),
 ])
 def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path):
     """PTY integration: run ttyscan with canned XTGETTCAP, verify exports."""
@@ -521,6 +557,11 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         assert s not in text, f"unexpected {s!r} in output: {text!r}"
 
     if "export TERMINFO=" in text:
-        terminfo_file = terminfo_dir / "x" / "xterm"
+        import re
+        term_match = re.search(r"export TERM=(\S+)", text)
+        term_name = term_match.group(1) if term_match else "xterm"
+        from ttyscan import sanitize_term_name, terminfo_file_path
+        safe = sanitize_term_name(term_name)
+        terminfo_file = terminfo_file_path(safe, terminfo_dir)
         assert terminfo_file.exists(), f"expected {terminfo_file} to exist"
         assert terminfo_file.stat().st_size > 0, "terminfo file is empty"
