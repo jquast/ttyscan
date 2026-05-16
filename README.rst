@@ -116,10 +116,9 @@ colors.
 **And so this tool is not often needed** except for the **very serious** terminal connoisseur.
 
 It serves as a demonstration: that a full terminal capability database *can* be transferred using
-XTGETTCAP_ for many modern terminals, supporting modern `terminfo(5)`_ and legacy `termcap(5)`_.  It
-
-My hope is that `setupterm(3)`_ may negotiate with full XTGETTCAP_ support at some point in the
-future, and that this utility is not commonly used or required!
+XTGETTCAP_ for many modern terminals.  My hope is that ncurses_ and `setupterm(3)`_ could negotiate
+with full XTGETTCAP_ support at some point in the future, and that this utility is not commonly used
+or required!
 
 Scope
 -----
@@ -127,7 +126,7 @@ Scope
 At time of this writing (May 2026), the ucs-detect_ dataset of 42 terminals shows three categories
 of support for ``XTGETTCAP``:
 
-- **Full** ``XTGETTCAP`` capability support: contour_, foot_, ghostty_, kitty_, rio, and wezterm
+- **Full** ``XTGETTCAP`` capability support: contour_, foot_, ghostty_, kitty_, rio_, and wezterm_
   transmit their complete terminfo boolean, numeric, and string capabilities via XTGETTCAP_.
 
   *ttyscan* produces terminfo files for only these terminals.  *ttyscan* may also discover a
@@ -208,6 +207,7 @@ values when they differ.
 .. _kitty: https://sw.kovidgoyal.net/kitty/kittens/query_terminal/
 .. _`microsoft/terminal#17735`: https://github.com/microsoft/terminal/issues/17735
 .. _ncurses: https://invisible-island.net/ncurses/
+.. _rio: https://rioterm.com/changelog#0220
 .. _`setupterm(3)`: https://linux.die.net/man/3/setupterm
 .. _`ssh_config(5)`: https://linux.die.net/man/5/ssh_config
 .. _`sshd_config(5)`: https://linux.die.net/man/5/sshd_config
@@ -216,10 +216,10 @@ values when they differ.
 .. _`tmux/tmux#3755`: https://github.com/tmux/tmux/issues/3755
 .. _`ttyscan.py`: https://github.com/jquast/ttyscan/blob/master/ttyscan.py
 .. _ucs-detect: https://ucs-detect.readthedocs.io/results.html#terminal-capabilities
+.. _wezterm: https://wezterm.org/
 .. _XTerm: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
 .. _`xtermjs/xterm.js#4107`: https://github.com/xtermjs/xterm.js/issues/4107
 .. _XTGETTCAP: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
-
 .. |pypi_downloads| image:: https://img.shields.io/pypi/dm/ttyscan.svg?logo=pypi
     :alt: Downloads
     :target: https://pypi.org/project/ttyscan/
