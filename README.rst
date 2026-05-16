@@ -95,7 +95,7 @@ Installation
 
    pip install ttyscan
 
-*ttyscan* requires Python3.8+.
+*ttyscan* requires Python3.6+.
 
 ttyscan.py_ is a stand-alone python file, it does not require pip to install, you can copy this
 single file directly from source and execute it from source, eg. ``python ~/bin/ttyscan.py``
