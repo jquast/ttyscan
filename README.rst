@@ -88,6 +88,10 @@ CLI Arguments
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
 previous executions, unless ``--force`` argument is used.
 
+Typical total execution time is 200ms.  The default timeout query can be changed by environment
+value TTYSCAN_QUERY_TIMEOUT=1.0 (float), in seconds. If timeout is reached, terminal response may
+"bleed" into subsequent programs, (like a shell prompt).
+
 Installation
 ------------
 
@@ -95,7 +99,10 @@ Installation
 
    pip install ttyscan
 
-*ttyscan* requires Python3.8+
+*ttyscan* requires Python3.8+.
+
+ttyscan.py_ is a stand-alone python file, it does not require pip to install, you can copy this
+single file directly from source and execute it from source, eg. ``python ~/bin/ttyscan.py``
 
 Motive
 ------
@@ -152,19 +159,10 @@ of support for ``XTGETTCAP``:
 Architecture
 ------------
 
-An easy-to-deploy variant of this program would be better created as **one single standalone**
-python script, without any 3rd party requirements or support for windows. This may be done in the
-future if it appears useful enough.
-
-*ttyscan* currently carries some unnecessary dependencies: only a very small subset of blessed_
-is used, while its transitive dependencies jinxed_ and wcwidth_ aren't used at all.  These
-"middle-weight" dependencies are used to reduce the size and complexity of this demonstration
-code.
-
 *ttyscan* uses the following,
 
-- ``TN`` is used to correct ``TERM`` when unmatched.
-- ``RGB`` is used to correct ``COLORTERM`` when unmatched.
+- ``XTGETTCAP`` field ``TN`` is used to correct ``TERM`` when unmatched.
+- ``XTGETTCAP`` field ``RGB`` is used to correct ``COLORTERM`` when unmatched.
 - all capability strings, keyboard and screen, when provided by ``XTGETTCAP``.
 - DEC Private Mode 2048 (In-Band Resize) to determine the window size
 - Or failing that, using Cursor Position Report sequence like done in XTerm's `resize.c
@@ -174,7 +172,7 @@ code.
 Details
 -------
 
-The use of ``XTGETTCAP`` is best described by foot_:
+The difference of *Full* and *Partial* ``XTGETTCAP`` support is best described by foot_:
 
   ``XTGETTCAP`` is an escape sequence initially introduced by XTerm_, and also implemented (and extended,
   to some degree) by Kitty.
@@ -192,7 +190,7 @@ The use of ``XTGETTCAP`` is best described by foot_:
   Kitty has extended this, and also supports querying all integer and string capabilities.
  
   Foot supports this, and extends it even further, to also include boolean capabilities.
-  **This means foot's entire terminfo can be queried via ``XTGETTCAP``.**
+  This means foot's entire terminfo can be queried via ``XTGETTCAP``.
 
 Further, all of ``TERM``, ``COLORTERM``, ``LINES``, or ``COLUMNS`` may not be transmitted by all
 software or protocols, some examples:
