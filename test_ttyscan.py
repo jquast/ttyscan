@@ -421,9 +421,49 @@ def test_write_all_none_fd():
     write_all(None, b"data")
 
 
+# Canned XTGETTCAP responses for PTY tests.
+_XT_RESP = {
+    "tn_xterm": b"\x1bP1+r544e=787465726d\x1b\\",
+    "colors_256": b"\x1bP1+r636f6c6f7273=323536\x1b\\",
+    "clear": b"\x1bP1+r636c656172=1b5b481b5b324a\x1b\\",
+    "am": b"\x1bP1+r616d\x1b\\",
+    "cols_80": b"\x1bP1+r636f6c73=3830\x1b\\",
+    "lines_24": b"\x1bP1+r6c696e6573=3234\x1b\\",
+}
+_CPR_31_128 = b"\x1b[31;128R"
+_CPR_5_10 = b"\x1b[5;10R"
+_CPR_6_7 = b"\x1b[6;7R"
+_CPR_999_999 = b"\x1b[999;999R"
+_DECRPM_none = b"\x1b[?2048;1$y"
+_DECRPM_set = b"\x1b[?2048;2$y"
+_RESIZE_31_128 = b"\x1b[48;31;128;0;0t"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
-def test_generate_exports_happy_path(tmp_path):
-    """Full integration: run ttyscan -vft in PTY with canned XTGETTCAP, verify terminfo output."""
+@pytest.mark.parametrize("flags,response,expected,not_expected", [
+    # force+termcap, full query, terminfo+termcap exported
+    ("-vft",
+     _XT_RESP["tn_xterm"] + _CPR_31_128
+     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
+     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     ["export TERM=xterm", "export TERMINFO=", "export TERMCAP="],
+     []),
+    # bogus CPR (999) rejection: no LINES/COLUMNS, still exports TERMINFO/TERMCAP
+    ("-vft",
+     _XT_RESP["tn_xterm"] + _CPR_31_128
+     + _DECRPM_none + _CPR_6_7 + _CPR_5_10 + _CPR_999_999
+     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
+     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     ["export TERM=xterm", "export TERMINFO=", "export TERMCAP="],
+     ["export LINES=", "export COLUMNS="]),
+    # no force/termcap, has_terminfo skips full query (TERM exported, none else)
+    ("-v",
+     _XT_RESP["tn_xterm"] + _CPR_31_128,
+     ["export TERM=xterm"],
+     ["export TERMINFO=", "export TERMCAP=", "export LINES=", "export COLUMNS="]),
+])
+def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path):
+    """PTY integration: run ttyscan with canned XTGETTCAP, verify exports."""
     import fcntl
     import select as _select
     import struct
@@ -439,6 +479,7 @@ def test_generate_exports_happy_path(tmp_path):
         "COVERAGE_FILE": project_coverage,
     }
     env.pop("COLORTERM", None)
+    env["TERM"] = "dumb"  # ensure TN differs so TERM is exported
 
     pid, master_fd = os.forkpty()
     if pid == 0:
@@ -446,7 +487,7 @@ def test_generate_exports_happy_path(tmp_path):
                   [sys.executable, "-m", "coverage", "run",
                    "--data-file=" + project_coverage,
                    "--append",
-                   "-m", "ttyscan", "-vft"],
+                   "-m", "ttyscan"] + flags.split(),
                   env)
         os._exit(1)
 
@@ -457,17 +498,7 @@ def test_generate_exports_happy_path(tmp_path):
     termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
 
     _select.select([master_fd], [], [], 3.0)
-    os.write(master_fd,
-             b"\x1bP1+r544e=787465726d\x1b\\\x1b[31;128R"
-             b"\x1b[?2048;1$y\x1b[6;7R"
-             b"\x1b[5;10R"
-             b"\x1b[31;128R"
-             b"\x1bP1+r636f6c6f7273=323536\x1b\\"
-             b"\x1bP1+r636c656172=1b5b481b5b324a\x1b\\"
-             b"\x1bP1+r616d\x1b\\"
-             b"\x1bP1+r636f6c73=3830\x1b\\"
-             b"\x1bP1+r6c696e6573=3234\x1b\\"
-             b"\x1b[31;128R")
+    os.write(master_fd, response)
 
     output = b""
     deadline = __import__("time").monotonic() + 5.0
@@ -485,10 +516,12 @@ def test_generate_exports_happy_path(tmp_path):
     os.waitpid(pid, 0)
     text = output.decode("utf-8", errors="replace")
 
-    assert "export TERM=xterm" in text, f"output: {text!r}"
-    assert f"export TERMINFO={terminfo_dir}" in text, f"output: {text!r}"
-    assert "export TERMCAP=" in text, f"output: {text!r}"
+    for s in expected:
+        assert s in text, f"missing {s!r} in output: {text!r}"
+    for s in not_expected:
+        assert s not in text, f"unexpected {s!r} in output: {text!r}"
 
-    terminfo_file = terminfo_dir / "x" / "xterm"
-    assert terminfo_file.exists(), f"expected {terminfo_file} to exist"
-    assert terminfo_file.stat().st_size > 0, "terminfo file is empty"
+    if "export TERMINFO=" in text:
+        terminfo_file = terminfo_dir / "x" / "xterm"
+        assert terminfo_file.exists(), f"expected {terminfo_file} to exist"
+        assert terminfo_file.stat().st_size > 0, "terminfo file is empty"
