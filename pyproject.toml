@@ -4,7 +4,7 @@ requires = [ "hatchling" ]
 
 [project]
 name = "ttyscan"
-dynamic = '0.0.3'
+version = '0.0.3'
 description = "Queries a terminal emulator for its type, size and capabilities"
 readme = "README.rst"
 requires-python = ">=3.6"
