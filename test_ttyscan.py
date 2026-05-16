@@ -460,10 +460,10 @@ def test_detect_size(decrpm, read_available_raw, read_until_responses, expected)
         if read_until_responses is not None else None
 
     with patch('ttyscan.decrqm_query', return_value=decrpm), \
-         patch('ttyscan.read_available', return_value=read_available_raw), \
-         patch('ttyscan.read_until', side_effect=side_effect) as mock_read_until, \
-         patch('ttyscan.write_all'), \
-         patch('ttyscan.verbose'):
+            patch('ttyscan.read_available', return_value=read_available_raw), \
+            patch('ttyscan.read_until', side_effect=side_effect) as mock_read_until, \
+            patch('ttyscan.write_all'), \
+            patch('ttyscan.verbose'):
         result = detect_size(3, 4, False)
 
     assert result == expected
