@@ -45,14 +45,14 @@ legacy calls to curses of `setupterm(3)`_ to succeed::
        $ ttyscan -vft
        ttyscan: probing terminal via XTGETTCAP ...
        ttyscan: size via dual CPR: 28x100
-       ttyscan: XTGETTCAP supported, terminal: rio; received 204 caps (10 bool, 5 num, 185 str) in 1523ms
+       ttyscan: XTGETTCAP supported, terminal: rio; received 198 caps (11 bool, 5 num, 178 str) in 4ms
        ttyscan: writing /home/jq/.config/ttyscan/terminfo/r/rio
        export COLORTERM=truecolor
        export TERM=rio
        export LINES=28
        export COLUMNS=100
        export TERMINFO=/home/jq/.config/ttyscan/terminfo
-       export TERMCAP='rio|XTGETTCAP-discovered terminal::am::ut::hs::km::5i::mi::ms::NP::xn::Co#256::co#80::it#8::li#24::pa#32767::ac=``aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~::bl=^G::mb=\E[5m::md=\E[1m::vi=\E[?25l::cl=\E[H\E[2J::ve=\E[?12l\E[?25h::cr=\r::cs=\E[%i%p1%d;%p2%dr::le=\b::DO=\E[%p1%dB::do=\n::nd=\E[C::cm=\E[%i%p1%d;%p2%dH::up=\E[A::vs=\E[?12;25h::dC=\E[P::mh=\E[2m::dl=\E[M::ds=\E]2;^G::ec=\E[%p1%dX::cd=\E[J::ce=\E[K::cb=\E[1K::vb=\E[?5h$<100/>\E[?5l::fs=^G::ho=\E[H::ch=\E[%i%p1%dG::ta=\t::st=\EH::al=\E[L::sf=\n::mk=\E[8m::is=\E[!p\E[?3;4l\E[4l\E>::K2=\EOE::kb=^?::kB=\E[Z::kl=\EOD::kd=\EOB::kr=\EOC::ku=\EOA::kD=\E[3~::@7=\EOF::@8=\EOM::k1=\EOP::k0=\E[21~::F1=\E[23~::F2=\E[24~::k2=\EOQ::k3=\EOR::k4=\EOS::k5=\E[15~::k6=\E[17~::k7=\E[18~::k8=\E[19~::k9=\E[20~::kh=\EOH::kI=\E[2~::kH=\E[1;2B::kN=\E[6~::kP=\E[5~::op=\E[39;49m::rp=%p1%c\E[%p2%{1}%-%db::mr=\E[7m::sr=\EM::ZR=\E[23m::ae=\E(B::te=\E[?1049l\E[23;0;0t::ei=\E[4l::ke=\E[?1l\E>::se=\E[27m::ue=\E[24m::r1=\Ec\E]104^G::r2=\E[!p\E[?3;4l\E[4l\E>::sa=%?%p9%t\E(0%e\E(B%;\E[0%?%p6%t;1%;%?%p5%t;2%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;%?%p7%t;8%;m::me=\E(B\E[m::ZH=\E[3m::as=\E(0::ti=\E[?1049h\E[22;0;0t::im=\E[4h::ks=\E[?1h\E=::so=\E[7m::us=\E[4m::ct=\E[3g::ts=\E]2;::cv=\E[%i%p1%dd:' 
+       export TERMCAP='rio|XTGETTCAP-discovered terminal::am::ut::hs::km::5i::mi::ms::NP::xn::Co#256::co#80::it#8::li#24::pa#32767::ac=``aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~::bl=^G::mb=\E[5m::md=\E[1m::bt=\E[Z::vi=\E[?25l::cl=\E[H\E[2J::ve=\E[?12l\E[?25h::cr=\r::cs=\E[%i%p1%d;%p2%dr::le=\b::DO=\E[%p1%dB::do=\n::nd=\E[C::cm=\E[%i%p1%d;%p2%dH::up=\E[A::vs=\E[?12;25h::dC=\E[P::mh=\E[2m::dl=\E[M::ds=\E]2;^G::ec=\E[%p1%dX::cd=\E[J::ce=\E[K::cb=\E[1K::vb=\E[?5h$<100/>\E[?5l::fs=^G::ho=\E[H::ch=\E[%i%p1%dG::ta=\t::st=\EH::al=\E[L::sf=\n::mk=\E[8m::is=\E[!p\E[?3;4l\E[4l\E>::K2=\EOE::kb=^?::kB=\E[Z::kl=\EOD::kd=\EOB::kr=\EOC::ku=\EOA::kD=\E[3~::@7=\EOF::@8=\EOM::k1=\EOP::k0=\E[21~::F1=\E[23~::F2=\E[24~::k2=\EOQ::k3=\EOR::k4=\EOS::k5=\E[15~::k6=\E[17~::k7=\E[18~::k8=\E[19~::k9=\E[20~::kh=\EOH::kI=\E[2~::kH=\E[1;2B::kN=\E[6~::kP=\E[5~::ps=\E[i::pf=\E[4i::po=\E[5i::op=\E[39;49m::rp=%p1%c\E[%p2%{1}%-%db::mr=\E[7m::sr=\EM::ZR=\E[23m::ae=\E(B::te=\E[?1049l\E[23;0;0t::ei=\E[4l::ke=\E[?1l\E>::se=\E[27m::ue=\E[24m::r1=\Ec\E]104^G::r2=\E[!p\E[?3;4l\E[4l\E>::sa=%?%p9%t\E(0%e\E(B%;\E[0%?%p6%t;1%;%?%p5%t;2%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;%?%p7%t;8%;m::me=\E(B\E[m::ZH=\E[3m::as=\E(0::ti=\E[?1049h\E[22;0;0t::im=\E[4h::ks=\E[?1h\E=::so=\E[7m::us=\E[4m::ct=\E[3g::ts=\E]2;::cv=\E[%i%p1%dd:'
 
        $ eval `ttyscan`
 
@@ -84,9 +84,9 @@ CLI Arguments
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
 previous executions, unless ``--force`` argument is used.
 
-Typical total execution time is 200ms.  The default timeout query can be changed by environment
-value TTYSCAN_QUERY_TIMEOUT=1.0 (float), in seconds. If timeout is reached, terminal response may
-"bleed" into subsequent programs, (like a shell prompt).
+Typical total execution time is under 200ms.  The default timeout query can be changed by
+environment value TTYSCAN_QUERY_TIMEOUT=1.0 (float), in seconds. If timeout is reached, terminal
+response may "bleed" into subsequent programs, (like a shell prompt).
 
 Installation
 ------------
