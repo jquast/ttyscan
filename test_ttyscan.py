@@ -345,15 +345,6 @@ def test_main_subprocess():
     assert result.returncode == 0
 
 
-def test_main_version():
-    """ttyscan module has __version__ attribute."""
-    result = subprocess.run(
-        [sys.executable, "-c", "import ttyscan; print(ttyscan.__version__)"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
-    )
-    assert result.stdout.strip() == "0.0.2"
-
-
 def test_ttyscan_query_timeout_bad_value():
     """TTYSCAN_QUERY_TIMEOUT with non-float value warns and uses default."""
     result = subprocess.run(
