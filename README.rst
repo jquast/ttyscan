@@ -1,9 +1,5 @@
 | |pypi_downloads| |codecov| |windows| |linux| |mac| |bsd|
 
-
-**Note: This software is not yet released! It best integrates with the next release of**
-**Blessed (1.40), in review: https://github.com/jquast/blessed/pull/375**
-
 ttyscan
 =======
 
@@ -167,7 +163,6 @@ Architecture
 - DEC Private Mode 2048 (In-Band Resize) to determine the window size
 - Or failing that, using Cursor Position Report sequence like done in XTerm's `resize.c
   <https://github.com/joejulian/xterm/blob/master/resize.c>`_
-- blessed_ library for all Terminal interaction and capability detection
 
 Details
 -------
@@ -211,9 +206,6 @@ values when they differ.
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
 .. _ucs-detect: https://ucs-detect.readthedocs.io/results.html#terminal-capabilities
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
-.. _blessed: https://github.com/jquast/blessed
-.. _jinxed: https://github.com/Rockhopper-Technologies/jinxed
-.. _wcwidth: https://github.com/jquast/wcwidth
 .. _contour: https://github.com/contour-terminal/contour
 .. _XTerm: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
 .. _XTGETTCAP: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95

@@ -4,11 +4,11 @@ requires = [ "hatchling" ]
 
 [project]
 name = "ttyscan"
-version = "0.0.1"
+version = "0.0.2"
 description = "Queries a terminal emulator for its type, size and capabilities"
 readme = "README.rst"
 requires-python = ">=3.8"
-dependencies = ["blessed>=1.5"]
+dependencies = []
 keywords = [
     "xtgettcap",
     "curses",
@@ -48,17 +48,16 @@ classifiers = [
 ]
 
 [project.scripts]
-ttyscan = "ttyscan.__main__:main"
+ttyscan = "ttyscan:main"
 
 [project.urls]
 Homepage = "https://github.com/jquast/ttyscan"
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "/ttyscan/*.py",
-  "/tests/*.py",
+  "/ttyscan.py",
+  "/test_ttyscan.py",
   "/README.rst",
   "/LICENSE",
-  "/bin/**",
   "/.gitignore",
 ]
