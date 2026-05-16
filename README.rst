@@ -145,12 +145,11 @@ of support for ``XTGETTCAP``:
   ``TERM=xterm-256color`` and ``TERM=xterm`` are the most ubiquitous terminal name, you should be
   just fine.
 
-- **None**: alacritty (refuses: `alacritty/vte#98`_, tracked: `alacritty/alacritty#7268`_), bobcat,
-  cmd.exe, ConEmu, cool-retro-term, Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux
-  fbdev, mintty, PuTTY, QTerminal, rxvt-unicode, screen, securecrt, st, Tabby, Apple Terminal,
-  Terminal.exe (planned: `microsoft/terminal#17735`_), terminology, tmux (passthrough:
-  `tmux/tmux#3755`_), libvterm, VS Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_),
-  weston-terminal, and zutty.
+- **None**: alacritty (refuses: `alacritty/vte#98`_), bobcat, cmd.exe, ConEmu, cool-retro-term,
+  Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux fbdev, mintty, PuTTY, QTerminal,
+  rxvt-unicode, screen, securecrt, st, Tabby, Apple Terminal, Terminal.exe (planned:
+  `microsoft/terminal#17735`_), terminology, tmux (passthrough: `tmux/tmux#3755`_), libvterm, VS
+  Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), weston-terminal, and zutty.
 
 Architecture
 ------------
@@ -200,27 +199,26 @@ software or protocols, some examples:
 *ttyscan* detects when these variables are unset or do not match values and re-exports the corrected
 values when they differ.
 
-.. _kitty: https://sw.kovidgoyal.net/kitty/kittens/query_terminal/
-.. _ghostty: https://mitchellh.com/writing/ghostty-devlog-004
-.. _alacritty: https://github.com/alacritty/vte/issues/98
-.. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
-.. _ucs-detect: https://ucs-detect.readthedocs.io/results.html#terminal-capabilities
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
+.. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
 .. _contour: https://github.com/contour-terminal/contour
-.. _XTerm: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
-.. _XTGETTCAP: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
 .. _foot: https://codeberg.org/dnkl/foot#xtgettcap
+.. _ghostty: https://mitchellh.com/writing/ghostty-devlog-004
+.. _`KDE#507017`: https://bugs.kde.org/show_bug.cgi?id=507017
+.. _kitty: https://sw.kovidgoyal.net/kitty/kittens/query_terminal/
+.. _`microsoft/terminal#17735`: https://github.com/microsoft/terminal/issues/17735
 .. _ncurses: https://invisible-island.net/ncurses/
 .. _`setupterm(3)`: https://linux.die.net/man/3/setupterm
 .. _`ssh_config(5)`: https://linux.die.net/man/5/ssh_config
 .. _`sshd_config(5)`: https://linux.die.net/man/5/sshd_config
-.. _`terminfo(5)`: https://linux.die.net/man/5/terminfo
 .. _`termcap(5)`: https://linux.die.net/man/5/termcap
-.. _`xtermjs/xterm.js#4107`: https://github.com/xtermjs/xterm.js/issues/4107
-.. _`microsoft/terminal#17735`: https://github.com/microsoft/terminal/issues/17735
-.. _`KDE#507017`: https://bugs.kde.org/show_bug.cgi?id=507017
+.. _`terminfo(5)`: https://linux.die.net/man/5/terminfo
 .. _`tmux/tmux#3755`: https://github.com/tmux/tmux/issues/3755
-.. _`alacritty/alacritty#7268`: https://github.com/alacritty/alacritty/issues/7268
+.. _`ttyscan.py`: https://github.com/jquast/ttyscan/blob/master/ttyscan.py
+.. _ucs-detect: https://ucs-detect.readthedocs.io/results.html#terminal-capabilities
+.. _XTerm: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
+.. _`xtermjs/xterm.js#4107`: https://github.com/xtermjs/xterm.js/issues/4107
+.. _XTGETTCAP: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
 
 .. |pypi_downloads| image:: https://img.shields.io/pypi/dm/ttyscan.svg?logo=pypi
     :alt: Downloads
