@@ -497,7 +497,6 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
     attrs[3] = attrs[3] & ~termios.ECHO
     termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
 
-    _select.select([master_fd], [], [], 3.0)
     os.write(master_fd, response)
 
     output = b""

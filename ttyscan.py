@@ -259,7 +259,7 @@ def set_cbreak(fd):
         return None
     try:
         saved = termios.tcgetattr(fd)
-        tty.setcbreak(fd)
+        tty.setcbreak(fd, when=termios.TCSANOW)
         return saved
     except termios.error as exc:
         warn(f"cannot set cbreak mode: {exc}")
