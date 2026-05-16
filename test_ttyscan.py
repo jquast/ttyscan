@@ -381,7 +381,7 @@ def test_has_terminfo(term, expected):
     assert result.stdout.strip() == expected
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+@pytest.mark.skipif(sys.platform == "win32", reason="start_new_session requires unix")
 @pytest.mark.parametrize("verbose_arg", ["", "True"])
 def test_generate_exports_no_tty(verbose_arg):
     """generate_exports() returns [] when /dev/tty unavailable."""
@@ -391,6 +391,7 @@ def test_generate_exports_no_tty(verbose_arg):
         [sys.executable, "-c", code],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
         stdin=subprocess.DEVNULL,
+        start_new_session=True,
     )
     assert result.stdout.strip() == "[]"
 
@@ -419,6 +420,55 @@ def test_write_all_none_fd():
     """write_all() is a no-op when fd is None."""
     from ttyscan import write_all
     write_all(None, b"data")
+
+
+@pytest.mark.parametrize("decrpm,read_available_raw,read_until_responses,expected", [
+    (2, b"\x1b[48;31;128;0;0t", None, (31, 128, 'inband')),
+    (2, b"",
+     [("31;128R", "31;128R"), ("31;128R", "31;128R")],
+     (31, 128, 'cpr')),
+    (2, b"",
+     [("31;128R", "31;128R"), ("999;999R", "999;999R")],
+     None),
+    (None, None,
+     [("31;128R", "31;128R"), ("31;128R", "31;128R")],
+     (31, 128, 'cpr')),
+    (None, None,
+     [("31;128R", "31;128R"), ("999;999R", "999;999R")],
+     None),
+    (None, None,
+     [("31;128R", "31;128R"), (None, None), ("5;10R", "5;10R")],
+     (5, 10, 'fallback_cpr')),
+    (None, None,
+     [(None, None), (None, None), (None, None)],
+     None),
+    (None, None,
+     [("31;128R", "31;128R"), (None, None), ("999;999R", "999;999R")],
+     None),
+])
+def test_detect_size(decrpm, read_available_raw, read_until_responses, expected):
+    from ttyscan import detect_size, _RE_CPR
+    import re as _re
+
+    def _make_response(pair):
+        if pair[0] is None:
+            return (None, b"")
+        m = _re.search(_RE_CPR, f"\x1b[{pair[0]}")
+        return (m, b"some data")
+
+    side_effect = [_make_response(p) for p in read_until_responses] \
+        if read_until_responses is not None else None
+
+    with patch('ttyscan.decrqm_query', return_value=decrpm), \
+         patch('ttyscan.read_available', return_value=read_available_raw), \
+         patch('ttyscan.read_until', side_effect=side_effect) as mock_read_until, \
+         patch('ttyscan.write_all'), \
+         patch('ttyscan.verbose'):
+        result = detect_size(3, 4, False)
+
+    assert result == expected
+    if expected == (31, 128, 'inband'):
+        mock_read_until.assert_not_called()
 
 
 # Canned XTGETTCAP responses for PTY tests.
@@ -521,7 +571,6 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
     if pid == 0:
         os.execve(sys.executable,
                   [sys.executable, "-m", "coverage", "run",
-                   "--data-file=" + project_coverage,
                    "--append",
                    "-m", "ttyscan"] + flags.split(),
                   env)
