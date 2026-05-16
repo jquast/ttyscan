@@ -21,13 +21,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.6', '3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.6', '3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14', '3.15']
         include:
-          - python-version: '3.14'
-            container: 'python:3.14-rc'
+          - python-version: '3.15'
+            container: 'python:3.15-rc'
 
     steps:
       - uses: actions/checkout@v4
+      - name: Workaround for git ownership issue
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
@@ -48,6 +50,8 @@ jobs:
     container: python:3.14
     steps:
       - uses: actions/checkout@v4
+      - name: Workaround for git ownership issue
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
