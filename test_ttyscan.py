@@ -314,7 +314,7 @@ def test_main_help():
     """ttyscan --help prints usage and exits 0."""
     result = subprocess.run(
         [sys.executable, "-m", "ttyscan", "--help"],
-        capture_output=True, text=True, timeout=5,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
     )
     assert result.returncode == 0
     assert "Export terminal capabilities" in result.stdout
@@ -339,7 +339,7 @@ def test_main_subprocess():
     """ttyscan --force runs and exits 0 from pipe."""
     result = subprocess.run(
         [sys.executable, "-m", "ttyscan", "-f"],
-        capture_output=True, text=True, timeout=5,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
         stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0
@@ -349,7 +349,7 @@ def test_main_version():
     """ttyscan module has __version__ attribute."""
     result = subprocess.run(
         [sys.executable, "-c", "import ttyscan; print(ttyscan.__version__)"],
-        capture_output=True, text=True, timeout=5,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
     )
     assert result.stdout.strip() == "0.0.2"
 
@@ -360,7 +360,7 @@ def test_ttyscan_query_timeout_bad_value():
         [sys.executable, "-c",
          "import os; os.environ['TTYSCAN_QUERY_TIMEOUT'] = 'bad'; "
          "import ttyscan; print(ttyscan._TTYSCAN_QUERY_TIMEOUT)"],
-        capture_output=True, text=True, timeout=5,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
     )
     assert result.stdout.strip() == "1.0"
     assert "is not a valid float" in result.stderr
@@ -376,7 +376,7 @@ def test_has_terminfo(term, expected):
         [sys.executable, "-c",
          f"from ttyscan import has_terminfo; "
          f"print(has_terminfo({term!r}))"],
-        capture_output=True, text=True, timeout=5,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
     )
     assert result.stdout.strip() == expected
 
@@ -389,7 +389,7 @@ def test_generate_exports_no_tty(verbose_arg):
     code = f"import ttyscan; print(ttyscan.generate_exports({verbose}))"
     result = subprocess.run(
         [sys.executable, "-c", code],
-        capture_output=True, text=True, timeout=5,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
         stdin=subprocess.DEVNULL,
     )
     assert result.stdout.strip() == "[]"

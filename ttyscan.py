@@ -333,7 +333,8 @@ def read_until(r_fd, w_fd, queries, pattern, timeout):
         if not raw:
             break
         buf += raw.decode('latin-1', errors='replace')
-        if (match := re.search(pattern, buf)) is not None:
+        match = re.search(pattern, buf)
+        if match is not None:
             return match, buf
         if len(buf) > max_size:
             break
@@ -365,7 +366,8 @@ def decrqm_query(r_fd, w_fd, mode, timeout):
     result = read_until(r_fd, w_fd,
                         [f'\x1b[?{mode}$p'],
                         _RE_CPR_BOUNDARY.pattern, timeout)
-    if (match := result[0]) is None:
+    match = result[0]
+    if match is None:
         return None
     data = result[1][:match.start()] + result[1][match.end():]
     for m in _RE_DECRPM.finditer(data):
@@ -375,12 +377,14 @@ def decrqm_query(r_fd, w_fd, mode, timeout):
 
 
 def detect_size(r_fd, w_fd, verbose_enabled):
-    has_inband = (decrpm := decrqm_query(r_fd, w_fd, 2048, 0.25)) is not None and decrpm == 2
+    decrpm = decrqm_query(r_fd, w_fd, 2048, 0.25)
+    has_inband = decrpm is not None and decrpm == 2
 
     if has_inband:
         write_all(w_fd, '\x1b[?2048h')
         raw = read_available(r_fd, 0.25).decode('latin-1', errors='replace')
-        if (resize_match := _RE_RESIZE.search(raw)):
+        resize_match = _RE_RESIZE.search(raw)
+        if resize_match:
             rows = int(resize_match.group(1))
             cols = int(resize_match.group(2))
             verbose(f"size via Mode 2048 in-band: {rows}x{cols}", verbose_enabled)
@@ -635,13 +639,13 @@ def check_term(caps, force):
 
 def check_lines_columns(rows, cols, winsize, force):
     term_cols, term_rows = winsize
-    if not force and (rows, cols) == (term_rows, term_cols):
-        if ((env_lines := os.environ.get("LINES")) is None or env_lines == str(rows)) and \
-           ((env_cols := os.environ.get("COLUMNS")) is None or env_cols == str(cols)):
-            return None
-    exports = []
     env_lines = os.environ.get("LINES")
     env_cols = os.environ.get("COLUMNS")
+    if not force and (rows, cols) == (term_rows, term_cols):
+        if (env_lines is None or env_lines == str(rows)) and \
+           (env_cols is None or env_cols == str(cols)):
+            return None
+    exports = []
     if force or env_lines != str(rows):
         exports.append(f"export LINES={rows}")
     if force or env_cols != str(cols):

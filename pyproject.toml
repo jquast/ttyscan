@@ -4,10 +4,10 @@ requires = [ "hatchling" ]
 
 [project]
 name = "ttyscan"
-version = "0.0.2"
+version = "0.0.3"
 description = "Queries a terminal emulator for its type, size and capabilities"
 readme = "README.rst"
-requires-python = ">=3.8"
+requires-python = ">=3.6"
 dependencies = []
 keywords = [
     "xtgettcap",
@@ -36,6 +36,8 @@ classifiers = [
   "Natural Language :: English",
   "Operating System :: POSIX",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.6",
+  "Programming Language :: Python :: 3.7",
   "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
