@@ -34,6 +34,46 @@ from ttyscan import (
 from ttyscan import write_terminfo as _write_terminfo
 
 
+def _pty_run(args, env, response, timeout=5.0):
+    """Run a command in a PTY child with canned terminal response.
+
+    Returns ``(output_text, wait_status)``.
+    """
+    import fcntl
+    import select
+    import struct
+    import termios
+
+    pid, master_fd = os.forkpty()
+    if pid == 0:
+        os.execve(sys.executable, args, env)
+        os._exit(1)
+
+    winsize = struct.pack("HHHH", 31, 128, 0, 0)
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+    attrs = termios.tcgetattr(master_fd)
+    attrs[3] = attrs[3] & ~termios.ECHO
+    termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
+
+    os.write(master_fd, response)
+
+    output = b""
+    deadline = __import__("time").monotonic() + timeout
+    while __import__("time").monotonic() < deadline:
+        ready, _, _ = select.select([master_fd], [], [], 0.3)
+        if ready:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output += chunk
+
+    _, status = os.waitpid(pid, 0)
+    return output.decode("utf-8", errors="replace"), status
+
+
 @pytest.mark.parametrize("name,hexstr", [("TN", "544e"), ("RGB", "524742")])
 def test_hex_encode(name, hexstr):
     """Encode ASCII string to hex."""
@@ -327,22 +367,33 @@ def test_main_help():
     ["-t"],
 ])
 def test_main_flags(args):
-    """main() parses flags and runs generate_exports."""
-    from ttyscan import main
+    from ttyscan import main, generate_exports
     buf = io.StringIO()
-    with patch.object(sys, "stdout", buf):
+    with patch.object(sys, "stdout", buf), \
+         patch("ttyscan.generate_exports", return_value=[]):
         main(args)
     assert isinstance(buf.getvalue(), str)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 def test_main_subprocess():
-    """ttyscan --force runs and exits 0 from pipe."""
-    result = subprocess.run(
+    env = {
+        **dict(os.environ),
+        "TTYSCAN_QUERY_TIMEOUT": "0.25",
+    }
+    env.pop("COLORTERM", None)
+    env["TERM"] = "dumb"
+
+    response = _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] \
+        + _XT_RESP["clear"] + _XT_RESP["am"] + _CPR_31_128
+
+    text, status = _pty_run(
         [sys.executable, "-m", "ttyscan", "-f"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
-        stdin=subprocess.DEVNULL,
-    )
-    assert result.returncode == 0
+        env, response)
+
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == 0
+    assert "export TERM=xterm" in text
 
 
 def test_ttyscan_query_timeout_bad_value():
@@ -541,11 +592,6 @@ _RESIZE_31_128 = b"\x1b[48;31;128;0;0t"
 ])
 def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path):
     """PTY integration: run ttyscan with canned XTGETTCAP, verify exports."""
-    import fcntl
-    import select as _select
-    import struct
-    import termios
-
     terminfo_dir = tmp_path / "ttyscan" / "terminfo"
     project_coverage = os.path.join(os.path.dirname(__file__), ".coverage")
 
@@ -556,45 +602,17 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         "COVERAGE_FILE": project_coverage,
     }
     env.pop("COLORTERM", None)
-    env["TERM"] = "dumb"  # ensure TN differs so TERM is exported
+    env["TERM"] = "dumb"
 
-    pid, master_fd = os.forkpty()
-    if pid == 0:
-        os.execve(sys.executable,
-                  [sys.executable, "-m", "coverage", "run",
-                   "--append",
-                   "-m", "ttyscan"] + flags.split(),
-                  env)
-        os._exit(1)
-
-    winsize = struct.pack("HHHH", 31, 128, 0, 0)
-    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-    attrs = termios.tcgetattr(master_fd)
-    attrs[3] = attrs[3] & ~termios.ECHO
-    termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
-
-    os.write(master_fd, response)
-
-    output = b""
-    deadline = __import__("time").monotonic() + 5.0
-    while __import__("time").monotonic() < deadline:
-        ready, _, _ = _select.select([master_fd], [], [], 0.3)
-        if ready:
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output += chunk
-
-    os.waitpid(pid, 0)
-    text = output.decode("utf-8", errors="replace")
+    text, _ = _pty_run(
+        [sys.executable, "-m", "coverage", "run", "--append",
+         "-m", "ttyscan"] + flags.split(),
+        env, response)
 
     for s in expected:
-        assert s in text, f"missing {s!r} in output: {text!r}"
+        assert s in text
     for s in not_expected:
-        assert s not in text, f"unexpected {s!r} in output: {text!r}"
+        assert s not in text
 
     if "export TERMINFO=" in text:
         import re
@@ -603,5 +621,5 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         from ttyscan import sanitize_term_name, terminfo_file_path
         safe = sanitize_term_name(term_name)
         terminfo_file = terminfo_file_path(safe, terminfo_dir)
-        assert terminfo_file.exists(), f"expected {terminfo_file} to exist"
-        assert terminfo_file.stat().st_size > 0, "terminfo file is empty"
+        assert terminfo_file.exists()
+        assert terminfo_file.stat().st_size > 0

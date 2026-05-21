@@ -17,7 +17,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 
 def warn(msg):
@@ -31,6 +31,14 @@ except ValueError:
          f"{os.environ['TTYSCAN_QUERY_TIMEOUT']!r} "
          f"is not a valid float, using default 1.0")
     _TTYSCAN_QUERY_TIMEOUT = 1.0
+
+try:
+    _TTYSCAN_DRAIN_TIMEOUT = float(os.environ.get('TTYSCAN_DRAIN_TIMEOUT', '0.2'))
+except ValueError:
+    warn(f"TTYSCAN_DRAIN_TIMEOUT value "
+         f"{os.environ['TTYSCAN_DRAIN_TIMEOUT']!r} "
+         f"is not a valid float, using default 0.2")
+    _TTYSCAN_DRAIN_TIMEOUT = 0.2
 
 _CANONICAL_BOOL_CAPS = [
     "bw", "am", "xsb", "xhp", "xenl", "eo", "gn", "hc", "km", "hs",
@@ -348,6 +356,15 @@ def xtgettcap_query(r_fd, w_fd, caps, timeout):
     match, data = read_until(r_fd, w_fd, queries, _RE_CPR_BOUNDARY.pattern, timeout)
     if match is None:
         return {}
+    drain_deadline = time.monotonic() + _TTYSCAN_DRAIN_TIMEOUT
+    while time.monotonic() < drain_deadline:
+        raw = read_available(r_fd, 0.05)
+        if not raw:
+            break
+        decoded = raw.decode('latin-1', errors='replace')
+        if not _RE_XTGETTCAP_RESPONSE.search(decoded):
+            break
+        data += decoded
     data = data[:match.start()] + data[match.end():]
     capabilities = {}
     for m in _RE_XTGETTCAP_RESPONSE.finditer(data):
@@ -764,6 +781,11 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         return exports
 
     finally:
+        if r_fd is not None:
+            try:
+                termios.tcflush(r_fd, termios.TCIFLUSH)
+            except termios.error:
+                pass
         restore_termios(r_fd, saved)
         if r_fd is not None:
             try:
