@@ -367,10 +367,10 @@ def test_main_help():
     ["-t"],
 ])
 def test_main_flags(args):
-    from ttyscan import main, generate_exports
+    from ttyscan import main, generate_exports  # noqa: F401
     buf = io.StringIO()
     with patch.object(sys, "stdout", buf), \
-         patch("ttyscan.generate_exports", return_value=[]):
+            patch("ttyscan.generate_exports", return_value=[]):
         main(args)
     assert isinstance(buf.getvalue(), str)
 
