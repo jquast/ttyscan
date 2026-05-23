@@ -17,7 +17,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 
 def warn(msg):
@@ -120,8 +120,10 @@ _BOOL_SET = frozenset(_CANONICAL_BOOL_CAPS)
 _NUM_SET = frozenset(_CANONICAL_NUM_CAPS)
 _STR_SET = frozenset(_CANONICAL_STR_CAPS)
 
+# VTE-based terminals (GNOME Terminal, et al.) send malformed ``\\x1bP0+r\\x1b\\\\``
+# (empty hex name) for unsupported capabilities, so zero-or-more hex digits.
 _RE_XTGETTCAP_RESPONSE = re.compile(
-    r'\x1bP([01])\+r([0-9a-fA-F]+)(?:=([0-9a-fA-F]*))?\x1b\\')
+    r'\x1bP([01])\+r([0-9a-fA-F]*)(?:=([0-9a-fA-F]*))?\x1b\\')
 _RE_CPR = re.compile(r'\x1b\[(\d+);(\d+)R')
 _RE_CPR_BOUNDARY = re.compile(r'\x1b\[[0-9]+;[0-9]+R')
 _RE_DECRPM = re.compile(r'\x1b\[\?(\d+);([0-4])\$y')
