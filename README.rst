@@ -59,7 +59,7 @@ legacy calls to curses of `setupterm(3)`_ to succeed::
        $ echo $TERM, $TERMINFO
        rio, /home/jquast/.config/ttyscan/terminfo
 
-       $ file -b /home/jquast/.config/ttyscan/terminfo/r/rio
+       $ file -b $TERMINFO/r/rio
        Compiled terminfo entry "rio"
 
        $ python -c 'import curses;curses.setupterm()'; echo $?
