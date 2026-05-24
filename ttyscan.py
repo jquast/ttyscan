@@ -124,6 +124,7 @@ _STR_SET = frozenset(_CANONICAL_STR_CAPS)
 # (empty hex name) for unsupported capabilities, so zero-or-more hex digits.
 _RE_XTGETTCAP_RESPONSE = re.compile(
     r'\x1bP([01])\+r([0-9a-fA-F]*)(?:=([0-9a-fA-F]*))?\x1b\\')
+_RE_XTVERSION_RESPONSE = re.compile(r'\x1bP>\|(.+?)\x1b\\')
 _RE_CPR = re.compile(r'\x1b\[(\d+);(\d+)R')
 _RE_CPR_BOUNDARY = re.compile(r'\x1b\[[0-9]+;[0-9]+R')
 _RE_DECRPM = re.compile(r'\x1b\[\?(\d+);([0-4])\$y')
@@ -379,6 +380,29 @@ def xtgettcap_query(r_fd, w_fd, caps, timeout):
                 value = ''
             capabilities[name] = value
     return capabilities
+
+
+def _parse_xtversion_text(text):
+    if ' ' in text:
+        name, version = text.split(' ', 1)
+        return name, version
+    if '(' in text:
+        parts = text.split('(', 1)
+        name = parts[0]
+        version = parts[1].rstrip(')')
+        return name, version
+    return text, ''
+
+
+def xtversion_query(r_fd, w_fd, timeout):
+    match, data = read_until(r_fd, w_fd, ['\x1b[>q'],
+                             _RE_CPR_BOUNDARY.pattern, timeout)
+    if match is None:
+        return None
+    data = data[:match.start()] + data[match.end():]
+    for m in _RE_XTVERSION_RESPONSE.finditer(data):
+        return _parse_xtversion_text(m.group(1))
+    return None
 
 
 def decrqm_query(r_fd, w_fd, mode, timeout):
@@ -656,6 +680,17 @@ def check_term(caps, force):
     return None
 
 
+def check_term_program(name, version, force):
+    exports = []
+    env_name = os.environ.get("TERM_PROGRAM", "")
+    if force or env_name != name:
+        exports.append(f"export TERM_PROGRAM={shell_escape(name)}")
+    env_version = os.environ.get("TERM_PROGRAM_VERSION", "")
+    if force or env_version != version:
+        exports.append(f"export TERM_PROGRAM_VERSION={shell_escape(version)}")
+    return exports or None
+
+
 def check_lines_columns(rows, cols, winsize, force):
     term_cols, term_rows = winsize
     env_lines = os.environ.get("LINES")
@@ -673,8 +708,6 @@ def check_lines_columns(rows, cols, winsize, force):
 
 
 def generate_exports(verbose_enabled=False, force=False, termcap=False):
-    verbose("probing terminal via XTGETTCAP ...", verbose_enabled)
-
     r_fd, w_fd = open_tty()
     if r_fd is None or w_fd is None:
         verbose("no terminal available", verbose_enabled)
@@ -686,19 +719,34 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
 
         init_caps = xtgettcap_query(r_fd, w_fd, _INIT_XTGETTCAP_CAPS,
                                     timeout=_TTYSCAN_QUERY_TIMEOUT)
+
+        exports = []
+
+        xtversion = None
+        if force or os.environ.get("TERM_PROGRAM") is None:
+            xtversion = xtversion_query(r_fd, w_fd, timeout=_TTYSCAN_QUERY_TIMEOUT)
+            if xtversion:
+                name, version = xtversion
+                verbose(f"XTVERSION: {name} {version}", verbose_enabled)
+                tp_export = check_term_program(name, version, force)
+                if tp_export:
+                    exports.extend(tp_export)
+            else:
+                verbose("XTVERSION not supported by this terminal", verbose_enabled)
+        else:
+            verbose("skipping XTVERSION (TERM_PROGRAM already set)", verbose_enabled)
+
         if not init_caps:
             verbose("XTGETTCAP not supported by this terminal", verbose_enabled)
-            return []
+            return exports
 
         tn_raw = init_caps.get("TN")
         if not tn_raw:
             verbose("no TN (terminal name) capability, cannot export further",
                     verbose_enabled)
-            return []
+            return exports
 
         tn = normalize_terminal_name(tn_raw)
-
-        exports = []
 
         ct_export = check_colorterm(init_caps, force)
         if ct_export:

@@ -15,6 +15,7 @@ from ttyscan import (
     check_colorterm,
     check_lines_columns,
     check_term,
+    check_term_program,
     classify_caps,
     escape_value,
     has_meaningful_caps,
@@ -30,6 +31,8 @@ from ttyscan import (
     unescape_terminfo,
     verbose,
     warn,
+    _parse_xtversion_text,
+    xtversion_query,
 )
 from ttyscan import write_terminfo as _write_terminfo
 
@@ -293,6 +296,80 @@ def test_normalize_terminal_name(name, expected):
     assert normalize_terminal_name(name) == expected
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("kitty(0.24.2)", ("kitty", "0.24.2")),
+    ("XTerm(367)", ("XTerm", "367")),
+    ("tmux 3.2a", ("tmux", "3.2a")),
+    ("X.Org 7.7.0(370)", ("X.Org", "7.7.0(370)")),
+    ("foot", ("foot", "")),
+    ("", ("", "")),
+])
+def test_parse_xtversion_text(text, expected):
+    """Parse XTVERSION response text into name and version."""
+    assert _parse_xtversion_text(text) == expected
+
+
+@pytest.mark.parametrize("name,version,force,env,expected", [
+    ("kitty", "0.24.2", False, {},
+     ["export TERM_PROGRAM='kitty'", "export TERM_PROGRAM_VERSION='0.24.2'"]),
+    ("kitty", "0.24.2", False,
+     {"TERM_PROGRAM": "kitty", "TERM_PROGRAM_VERSION": "0.24.2"}, None),
+    ("kitty", "0.24.2", True,
+     {"TERM_PROGRAM": "kitty", "TERM_PROGRAM_VERSION": "0.24.2"},
+     ["export TERM_PROGRAM='kitty'", "export TERM_PROGRAM_VERSION='0.24.2'"]),
+    ("xterm", "", False, {},
+     ["export TERM_PROGRAM='xterm'"]),
+    ("X.Org", "7.7.0(370)", False, {},
+     ["export TERM_PROGRAM='X.Org'", "export TERM_PROGRAM_VERSION='7.7.0(370)'"]),
+])
+def test_check_term_program(name, version, force, env, expected):
+    """Check TERM_PROGRAM/TERM_PROGRAM_VERSION export logic."""
+    with patch.dict(os.environ, env, clear=True):
+        assert check_term_program(name, version, force) == expected
+
+
+@pytest.mark.parametrize("read_until_result,expected", [
+    ((None, ""), None),
+    ((None, "\x1bP>|kitty(0.24.2)\x1b\\"), None),
+    ((None, "\x1b[31;128R"), None),
+])
+def test_xtversion_query_no_cpr(read_until_result, expected):
+    """xtversion_query returns None when CPR boundary not found."""
+    with patch('ttyscan.read_until', return_value=read_until_result):
+        assert xtversion_query(3, 4, 0.25) is expected
+
+
+@pytest.mark.parametrize("data,expected_name,expected_version", [
+    ("\x1bP>|kitty(0.24.2)\x1b\\", "kitty", "0.24.2"),
+    ("\x1bP>|tmux 3.2a\x1b\\", "tmux", "3.2a"),
+    ("\x1bP>|foot\x1b\\", "foot", ""),
+])
+def test_xtversion_query_parsed(data, expected_name, expected_version):
+    """xtversion_query extracts name/version from DCS response."""
+    import re as _re_mod
+    from ttyscan import _RE_CPR_BOUNDARY
+
+    full_buf = data + "\x1b[31;128R"
+    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, full_buf)
+    read_until_return = (cpr_match, full_buf)
+    with patch('ttyscan.read_until', return_value=read_until_return):
+        result = xtversion_query(3, 4, 0.25)
+    assert result == (expected_name, expected_version)
+
+
+def test_xtversion_query_no_dcs():
+    """xtversion_query returns None when no DCS response found before CPR."""
+    import re as _re_mod
+    from ttyscan import _RE_CPR_BOUNDARY
+
+    full_buf = "\x1b[31;128R"
+    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, full_buf)
+    read_until_return = (cpr_match, full_buf)
+    with patch('ttyscan.read_until', return_value=read_until_return):
+        result = xtversion_query(3, 4, 0.25)
+    assert result is None
+
+
 @pytest.mark.parametrize("func,args,enabled,expected_in", [
     (warn, ("test message",), None, "ttyscan: test message"),
     (verbose, ("test message", True), True, "ttyscan: test message"),
@@ -523,6 +600,7 @@ _XT_RESP = {
     "cols_80": b"\x1bP1+r636f6c73=3830\x1b\\",
     "lines_24": b"\x1bP1+r6c696e6573=3234\x1b\\",
     "rgb_8_8_8": b"\x1bP1+r524742=382f382f38\x1b\\",
+    "xtversion_kitty": b"\x1bP>|kitty(0.24.2)\x1b\\",
 }
 _CPR_31_128 = b"\x1b[31;128R"
 _CPR_5_10 = b"\x1b[5;10R"
