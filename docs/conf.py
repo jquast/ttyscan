@@ -26,7 +26,7 @@ extensions = [
 
 templates_path = ['_templates']
 source_suffix = {'.rst': 'restructuredtext'}
-master_doc = 'index'
+master_doc = 'README'
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 add_function_parentheses = True
