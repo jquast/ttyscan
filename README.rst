@@ -144,11 +144,18 @@ of support for ``XTGETTCAP``:
   ``TERM=xterm-256color`` and ``TERM=xterm`` are the most ubiquitous terminal name, you should be
   just fine.
 
-- **None**: alacritty (refuses: `alacritty/vte#98`_), bobcat, cmd.exe, ConEmu, cool-retro-term,
-  Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux fbdev, mintty, PuTTY, QTerminal,
-  rxvt-unicode, screen, securecrt, st, Tabby, Apple Terminal, Terminal.exe (planned:
+- **No Support**: alacritty (refuses: `alacritty/vte#98`_), bobcat, cmd.exe, 
+  Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux fbdev, mintty, 
+  rxvt-unicode, screen, securecrt, st, Tabby, Terminal.exe (planned:
   `microsoft/terminal#17735`_), terminology, tmux (passthrough: `tmux/tmux#3755`_), libvterm, VS
   Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), weston-terminal, and zutty.
+
+- **Non-Compliant**: ConEmu, cool-retro-term, Apple Terminal, PuTTY, QTerminal: When a terminal emulator
+  does not support XTGETTCAP, it **should** silently consume VT100 Mode DCS queries without answer.
+
+  However, some non-compliant terminals display XTGETTCAP query output, eg. ``+q544e+q524742+q636f6c6f7273+q626c696e6b+..``
+  visually: QTerminal, cool-retro-term, and qtermwidget (`fixed upstream <https://github.com/lxqt/qtermwidget/pull/644>`_), 
+  PuTTY, ConEmu.exe, and Apple's Terminal.app all fail to parse DCS queries, displaying raw sequence output.
 
 Architecture
 ------------
