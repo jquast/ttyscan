@@ -17,12 +17,14 @@ from ttyscan import (
     check_term,
     check_term_program,
     classify_caps,
+    decqss_query,
     escape_value,
     has_meaningful_caps,
     hex_decode,
     hex_encode,
     normalize_terminal_name,
     pack_short_le,
+    probe_truecolor,
     sanitize_term_name,
     shell_escape,
     terminfo_file_path,
@@ -62,6 +64,61 @@ def _pty_run(args, env, response, timeout=5.0):
 
     output = b""
     deadline = __import__("time").monotonic() + timeout
+    while __import__("time").monotonic() < deadline:
+        ready, _, _ = select.select([master_fd], [], [], 0.3)
+        if ready:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output += chunk
+
+    _, status = os.waitpid(pid, 0)
+    return output.decode("utf-8", errors="replace"), status
+
+
+def _pty_run_staggered(args, env, responses, timeout=5.0):
+    """Run a command in a PTY child, writing response chunks with delays.
+
+    ``responses`` is a list of ``(delay_sec, data)`` tuples.  Each chunk
+    is written after its corresponding delay, allowing multiple
+    ``read_until`` rounds to consume separate response segments.
+    Returns ``(output_text, wait_status)``.
+    """
+    import fcntl
+    import select
+    import struct
+    import termios
+
+    pid, master_fd = os.forkpty()
+    if pid == 0:
+        os.execve(sys.executable, args, env)
+        os._exit(1)
+
+    winsize = struct.pack("HHHH", 31, 128, 0, 0)
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+    attrs = termios.tcgetattr(master_fd)
+    attrs[3] = attrs[3] & ~termios.ECHO
+    termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
+
+    output = b""
+    deadline = __import__("time").monotonic() + timeout
+    for delay, chunk in responses:
+        __import__("time").sleep(delay)
+        os.write(master_fd, chunk)
+        if __import__("time").monotonic() >= deadline:
+            break
+        ready, _, _ = select.select([master_fd], [], [], 0.3)
+        if ready:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except OSError:
+                break
+            output += chunk
+
+    # drain remaining output
     while __import__("time").monotonic() < deadline:
         ready, _, _ = select.select([master_fd], [], [], 0.3)
         if ready:
@@ -427,6 +484,83 @@ def test_write_terminfo(tmp_path, term, str_caps, num_caps, bool_caps):
     assert fpath.stat().st_size > 0
 
 
+@pytest.mark.parametrize("setting_id,read_until_result,expected", [
+    ("m",
+     (None, ""),
+     None),
+    ("m",
+     (None, "\x1bP1$r0m\x1b\\"),
+     None),
+    ("m",
+     (None, "\x1b[31;128R"),
+     None),
+])
+def test_decqss_query_no_cpr(setting_id, read_until_result, expected):
+    """decqss_query returns None when CPR boundary not found."""
+    with patch('ttyscan.read_until', return_value=read_until_result):
+        assert decqss_query(3, 4, setting_id, 0.25) is expected
+
+
+@pytest.mark.parametrize("setting_id,buf,expected", [
+    ("m",
+     "\x1bP1$r0m\x1b\\\x1b[31;128R",
+     "0"),
+    ("m",
+     "\x1bP1$r48:2:1:2:3m\x1b\\\x1b[31;128R",
+     "48:2:1:2:3"),
+    (" q",
+     "\x1bP1$r2 q\x1b\\\x1b[31;128R",
+     "2"),
+])
+def test_decqss_query_valid(setting_id, buf, expected):
+    """decqss_query parses valid DECRQSS responses."""
+    import re as _re_mod
+    from ttyscan import _RE_CPR_BOUNDARY
+
+    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, buf)
+    with patch('ttyscan.read_until', return_value=(cpr_match, buf)):
+        assert decqss_query(3, 4, setting_id, 0.25) == expected
+
+
+@pytest.mark.parametrize("buf", [
+    "\x1bP0$rm\x1b\\\x1b[31;128R",
+    "\x1b[31;128R",
+])
+def test_decqss_query_invalid(buf):
+    """decqss_query returns None for Ps=0 or missing response."""
+    import re as _re_mod
+    from ttyscan import _RE_CPR_BOUNDARY
+
+    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, buf)
+    with patch('ttyscan.read_until', return_value=(cpr_match, buf)):
+        assert decqss_query(3, 4, 'm', 0.25) is None
+
+
+@pytest.mark.parametrize("original,probed,expected,verbose_msg", [
+    ("0", "48:2:1:2:3", True, None),
+    ("0", "0", False, None),
+    ("0", "40", False, None),
+    (None, None, False, "DECRQSS not supported by this terminal"),
+])
+def test_probe_truecolor(original, probed, expected, verbose_msg):
+    """probe_truecolor detects truecolor via DECRQSS SGR set/query."""
+    decrqss_responses = [original, probed]
+    with patch('ttyscan.decqss_query', side_effect=decrqss_responses), \
+            patch('ttyscan.write_all'), \
+            patch('ttyscan.verbose') as mock_verbose:
+        assert probe_truecolor(3, 4, 0.25, True) == expected
+        if verbose_msg:
+            mock_verbose.assert_called_with(verbose_msg, True)
+
+
+def test_probe_truecolor_fails_on_second_query():
+    """probe_truecolor returns False when probe query fails."""
+    with patch('ttyscan.decqss_query', side_effect=["0", None]), \
+            patch('ttyscan.write_all'), \
+            patch('ttyscan.verbose'):
+        assert probe_truecolor(3, 4, 0.25, False) is False
+
+
 def test_main_help():
     """ttyscan --help prints usage and exits 0."""
     result = subprocess.run(
@@ -609,6 +743,11 @@ _CPR_999_999 = b"\x1b[999;999R"
 _DECRPM_none = b"\x1b[?2048;1$y"
 _DECRPM_set = b"\x1b[?2048;2$y"
 _RESIZE_31_128 = b"\x1b[48;31;128;0;0t"
+_DECRQSS_SGR_ORIGINAL = b"\x1bP1$r0m\x1b\\"
+_DECRQSS_SGR_TRUECOLOR = b"\x1bP1$r48:2:1:2:3m\x1b\\"
+_DECRQSS_SGR_PALETTE = b"\x1bP1$r40m\x1b\\"
+_DECRQSS_SGR_INVALID = b"\x1bP0$r\x1b\\"
+_XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
@@ -701,3 +840,105 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         terminfo_file = terminfo_file_path(safe, terminfo_dir)
         assert terminfo_file.exists()
         assert terminfo_file.stat().st_size > 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+@pytest.mark.parametrize("flags,responses,env_extra,expected,not_expected", [
+    # DECRQSS detects truecolor when neither COLORTERM nor XTGETTCAP RGB indicate it
+    ("-v",
+     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
+      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
+      (0.1, _DECRPM_none + _CPR_5_10),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_999_999)],
+     {"TERM_PROGRAM": "xterm"},
+     ["export COLORTERM=truecolor", "export TERM=xterm"],
+     ["export LINES=", "export COLUMNS=", "export TERMINFO=", "export TERMCAP="]),
+    # DECRQSS probe skipped when COLORTERM already truecolor
+    ("-v",
+     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+      (0.1, _DECRPM_none + _CPR_5_10),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_999_999)],
+     {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
+     ["export TERM=xterm"],
+     ["export COLORTERM=truecolor"]),
+    # DECRQSS probe skipped when XTGETTCAP RGB=8/8/8
+    ("-v",
+     [(0.0, _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128),
+      (0.1, _DECRPM_none + _CPR_31_128),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_999_999)],
+     {"TERM_PROGRAM": "xterm"},
+     ["export COLORTERM=truecolor", "export TERM=xterm"],
+     ["export TERMINFO=", "export TERMCAP="]),
+    # -f forces DECRQSS probe even when COLORTERM already truecolor
+    ("-vf",
+     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+      (0.1, _XTVERSION_XTERM + _CPR_5_10),
+      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_6_7),
+      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_5_10),
+      (0.1, _DECRPM_none + _CPR_6_7),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_31_128)],
+     {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
+     ["export COLORTERM=truecolor", "export TERM=xterm"],
+     []),
+    # DECRQSS unsupported: no probe response, no COLORTERM export
+    ("-v",
+     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+      (0.1, _DECRPM_none + _CPR_5_10),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_999_999)],
+     {"TERM_PROGRAM": "xterm"},
+     ["export TERM=xterm"],
+     ["export COLORTERM=truecolor"]),
+    # DECRQSS returns palette index (non-truecolor): no COLORTERM export
+    ("-v",
+     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
+      (0.1, _DECRQSS_SGR_PALETTE + _CPR_6_7),
+      (0.1, _DECRPM_none + _CPR_5_10),
+      (0.1, _CPR_999_999),
+      (0.1, _CPR_999_999)],
+     {"TERM_PROGRAM": "xterm"},
+     ["export TERM=xterm"],
+     ["export COLORTERM=truecolor"]),
+    # DECRQSS probe with XTGETTCAP not supported (empty init): COLORTERM only
+    ("-v",
+     [(0.0, _CPR_31_128),
+      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
+      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7)],
+     {"TERM_PROGRAM": "xterm"},
+     ["export COLORTERM=truecolor"],
+     ["export TERM=", "export TERMINFO=", "export LINES=", "export COLUMNS="]),
+])
+def test_decrqss_probe_pty(flags, responses, env_extra, expected,
+                            not_expected, tmp_path):
+    """PTY integration: DECRQSS truecolor probe scenarios."""
+    env = {
+        **dict(os.environ),
+        "XDG_CONFIG_HOME": str(tmp_path),
+        "TTYSCAN_QUERY_TIMEOUT": "0.5",
+    }
+    env.pop("COLORTERM", None)
+    env["TERM"] = "dumb"
+    env.update(env_extra)
+
+    project_coverage = os.path.join(os.path.dirname(__file__), ".coverage")
+    env["COVERAGE_FILE"] = project_coverage
+
+    text, status = _pty_run_staggered(
+        [sys.executable, "-m", "coverage", "run", "--append",
+         "-m", "ttyscan"] + flags.split(),
+        env, responses)
+
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == 0
+
+    for s in expected:
+        assert s in text, f"expected {s!r} not found in output:\n{text}"
+    for s in not_expected:
+        assert s not in text, f"unexpected {s!r} found in output:\n{text}"

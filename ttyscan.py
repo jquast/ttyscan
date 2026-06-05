@@ -17,7 +17,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.6"
+__version__ = "0.0.7"
 
 
 def warn(msg):
@@ -129,6 +129,7 @@ _RE_CPR = re.compile(r'\x1b\[(\d+);(\d+)R')
 _RE_CPR_BOUNDARY = re.compile(r'\x1b\[[0-9]+;[0-9]+R')
 _RE_DECRPM = re.compile(r'\x1b\[\?(\d+);([0-4])\$y')
 _RE_RESIZE = re.compile(r'\x1b\[48;(\d+);(\d+);(\d+);(\d+)t')
+_RE_DECRQSS_RESPONSE = re.compile(r'\x1bP([01])\$r([^\x1b]*)\x1b\\')
 
 _TERMINFO_MAGIC = 0o432
 _TERMINFO_MAGIC2 = 0o1036
@@ -417,6 +418,63 @@ def decrqm_query(r_fd, w_fd, mode, timeout):
         if int(m.group(1)) == mode:
             return int(m.group(2))
     return None
+
+
+def decqss_query(r_fd, w_fd, setting_id, timeout):
+    """Query terminal state via DECRQSS.
+
+    Sends ``DCS $ q <setting_id> ST`` with a CPR boundary fence.  Returns the
+    decoded parameter string on success, with the echoed setting identifier
+    stripped.  Returns ``None`` when the terminal does not support DECRQSS or
+    the setting is invalid.
+    """
+    match, data = read_until(r_fd, w_fd,
+                             [f'\x1bP$q{setting_id}\x1b\\'],
+                             _RE_CPR_BOUNDARY.pattern, timeout)
+    if match is None:
+        return None
+    data = data[:match.start()] + data[match.end():]
+    for m in _RE_DECRQSS_RESPONSE.finditer(data):
+        if m.group(1) == '1':
+            pt = m.group(2)
+            if pt.endswith(setting_id):
+                return pt[:-len(setting_id)]
+            return pt
+    return None
+
+
+def probe_truecolor(r_fd, w_fd, timeout, verbose_enabled):
+    """Detect truecolor support via DECRQSS SGR set/query/restore.
+
+    Queries the current SGR to capture the original rendering state, sets the
+    background to a known truecolor value using colon-delimited RGB, then
+    queries SGR again to verify the color was accepted.  Restores the original
+    SGR afterward.  Returns ``True`` if the probed background color appears in
+    the DECRQSS response, indicating 24-bit color support.
+    """
+    original = decqss_query(r_fd, w_fd, 'm', timeout)
+    if original is None:
+        verbose("DECRQSS not supported by this terminal", verbose_enabled)
+        return False
+
+    probe_bg = '48:2:1:2:3'
+    write_all(w_fd, f'\x1b[{probe_bg}m')
+    probed = decqss_query(r_fd, w_fd, 'm', timeout)
+    write_all(w_fd, f'\x1b[{original}m')
+
+    if probed is None:
+        verbose("DECRQSS probe query failed", verbose_enabled)
+        return False
+    # Terminals may normalize the response, e.g. inserting an empty
+    # color-space-identifier or using semicolon delimiters:
+    # "48:2::1:2:3" or "48;2;1;2;3" vs our probe "48:2:1:2:3".
+    # Check for the RGB triple "1 2 3" appearing after a "48 2" prefix
+    # with any combination of colon/semicolon delimiters.
+    result = bool(re.search(r'48[:;]2[:;]*1[:;]2[:;]3', probed))
+    if not result:
+        verbose(f"DECRQSS truecolor probe: color not accepted: {probed!r}",
+                verbose_enabled)
+    return result
 
 
 def detect_size(r_fd, w_fd, verbose_enabled):
@@ -736,25 +794,25 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         else:
             verbose("skipping XTVERSION (TERM_PROGRAM already set)", verbose_enabled)
 
-        if not init_caps:
-            verbose("XTGETTCAP not supported by this terminal", verbose_enabled)
-            return exports
+        colorterm = os.environ.get("COLORTERM", "")
+        has_env_tc = colorterm in ("truecolor", "24bit")
+        rgb = init_caps.get("RGB", "") if init_caps else ""
+        has_rgb_tc = False
+        if rgb:
+            try:
+                has_rgb_tc = int(rgb.split("/", 1)[0]) == 8
+            except ValueError:
+                pass
 
-        tn_raw = init_caps.get("TN")
-        if not tn_raw:
-            verbose("no TN (terminal name) capability, cannot export further",
-                    verbose_enabled)
-            return exports
+        decrqss_tc = False
+        if force or (not has_env_tc and not has_rgb_tc):
+            if probe_truecolor(r_fd, w_fd, _TTYSCAN_QUERY_TIMEOUT,
+                               verbose_enabled):
+                verbose("truecolor confirmed via DECRQSS", verbose_enabled)
+                decrqss_tc = True
 
-        tn = normalize_terminal_name(tn_raw)
-
-        ct_export = check_colorterm(init_caps, force)
-        if ct_export:
-            exports.append(ct_export)
-
-        term_export = check_term(init_caps, force)
-        if term_export:
-            exports.append(term_export)
+        if decrqss_tc:
+            exports.append("export COLORTERM=truecolor")
 
         size = detect_size(r_fd, w_fd, verbose_enabled)
         if size:
@@ -773,6 +831,27 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
                 lc = check_lines_columns(rows, cols, winsize, force)
                 if lc:
                     exports.extend(lc)
+
+        if not init_caps:
+            verbose("XTGETTCAP not supported by this terminal", verbose_enabled)
+            return exports
+
+        tn_raw = init_caps.get("TN")
+        if not tn_raw:
+            verbose("no TN (terminal name) capability, cannot export further",
+                    verbose_enabled)
+            return exports
+
+        tn = normalize_terminal_name(tn_raw)
+
+        if not decrqss_tc:
+            ct_export = check_colorterm(init_caps, force)
+            if ct_export:
+                exports.append(ct_export)
+
+        term_export = check_term(init_caps, force)
+        if term_export:
+            exports.append(term_export)
 
         if not force and not termcap and has_terminfo(tn):
             verbose(f"XTGETTCAP supported, terminal: {tn}", verbose_enabled)
