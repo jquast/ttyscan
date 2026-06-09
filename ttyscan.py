@@ -17,7 +17,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 
 def warn(msg):
@@ -362,13 +362,15 @@ def xtgettcap_query(r_fd, w_fd, caps, timeout):
         return {}
     drain_deadline = time.monotonic() + _TTYSCAN_DRAIN_TIMEOUT
     while time.monotonic() < drain_deadline:
-        raw = read_available(r_fd, 0.05)
+        remaining = drain_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        raw = read_available(r_fd, min(remaining, 0.05))
         if not raw:
-            break
+            continue
         decoded = raw.decode('latin-1', errors='replace')
-        if not _RE_XTGETTCAP_RESPONSE.search(decoded):
-            break
-        data += decoded
+        if _RE_XTGETTCAP_RESPONSE.search(decoded):
+            data += decoded
     data = data[:match.start()] + data[match.end():]
     capabilities = {}
     for m in _RE_XTGETTCAP_RESPONSE.finditer(data):
@@ -944,6 +946,10 @@ def main(argv=None):
     parser.add_argument(
         "-t", "--termcap", action="store_true",
         help="Also export TERMCAP value",
+    )
+    parser.add_argument(
+        "--version", action="version",
+        version=f"ttyscan {__version__}",
     )
     args = parser.parse_args(argv)
 

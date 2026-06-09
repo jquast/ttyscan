@@ -79,14 +79,18 @@ CLI Arguments
       -v, --verbose  Print diagnostic information to stderr
       -f, --force    Force export of all values even if unchanged
       -t, --termcap  Also export TERMCAP value
+      --version      show program's version number and exit
 
 *ttyscan* saves a `terminfo(5)`_ file to $XDG_CONFIG_HOME/ttyscan/terminfo or
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
 previous executions, unless ``--force`` argument is used.
 
-Typical total execution time is under 200ms.  The default timeout query can be changed by
-environment value TTYSCAN_QUERY_TIMEOUT=1.0 (float), in seconds. If timeout is reached, terminal
+Typical total execution time is under 200ms.  The default query timeout can be changed by
+environment value ``TTYSCAN_QUERY_TIMEOUT=1.0`` (float), in seconds. If timeout is reached, terminal
 response may "bleed" into subsequent programs, (like a shell prompt).
+After receiving the initial response, a secondary drain phase collects any remaining XTGETTCAP
+replies, controlled by ``TTYSCAN_DRAIN_TIMEOUT=0.2`` (float). Increase this value if some
+capabilities are intermittently missing, particularly over high-latency SSH connections.
 
 Installation
 ------------
@@ -168,6 +172,8 @@ Architecture
 - DEC Private Mode 2048 (In-Band Resize) to determine the window size
 - Or failing that, using Cursor Position Report sequence like done in XTerm's `resize.c
   <https://github.com/joejulian/xterm/blob/master/resize.c>`_
+- DECRQSS_ (Request Setting Selection) to probe truecolor support when ``RGB`` is unavailable,
+  by setting and querying a 24-bit background color
 
 Details
 -------
@@ -208,6 +214,7 @@ values when they differ.
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
 .. _contour: https://github.com/contour-terminal/contour
+.. _DECRQSS: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
 .. _foot: https://codeberg.org/dnkl/foot#xtgettcap
 .. _ghostty: https://mitchellh.com/writing/ghostty-devlog-004
 .. _`KDE#507017`: https://bugs.kde.org/show_bug.cgi?id=507017
