@@ -40,6 +40,8 @@ except ValueError:
          f"is not a valid float, using default 0.2")
     _TTYSCAN_DRAIN_TIMEOUT = 0.2
 
+_READ_BUFFER = b''
+
 _CANONICAL_BOOL_CAPS = [
     "bw", "am", "xsb", "xhp", "xenl", "eo", "gn", "hc", "km", "hs",
     "in", "da", "db", "mir", "msgr", "os", "eslok", "xt", "hz", "ul",
@@ -303,7 +305,11 @@ def write_all(fd, data):
 
 
 def read_available(r_fd, timeout):
+    global _READ_BUFFER
     buf = bytearray()
+    if _READ_BUFFER:
+        buf.extend(_READ_BUFFER)
+        _READ_BUFFER = b''
     stime = time.monotonic()
     max_size = 131072
     while True:
@@ -354,6 +360,7 @@ def read_until(r_fd, w_fd, queries, pattern, timeout):
 
 
 def xtgettcap_query(r_fd, w_fd, caps, timeout):
+    global _READ_BUFFER
     if not caps:
         return {}
     queries = [f'\x1bP+q{hex_encode(c)}\x1b\\' for c in caps]
@@ -371,6 +378,9 @@ def xtgettcap_query(r_fd, w_fd, caps, timeout):
         decoded = raw.decode('latin-1', errors='replace')
         if _RE_XTGETTCAP_RESPONSE.search(decoded):
             data += decoded
+        else:
+            _READ_BUFFER = raw + _READ_BUFFER
+            break
     data = data[:match.start()] + data[match.end():]
     capabilities = {}
     for m in _RE_XTGETTCAP_RESPONSE.finditer(data):
@@ -855,7 +865,15 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         if term_export:
             exports.append(term_export)
 
-        if not force and not termcap and has_terminfo(tn):
+        if not force and not termcap and (
+            has_terminfo(tn)
+            or terminfo_installed_at(sanitize_term_name(tn), ttyscan_terminfo_dir())
+        ):
+            if not has_terminfo(tn):
+                terminfo_value = str(ttyscan_terminfo_dir())
+                current_terminfo = os.environ.get("TERMINFO")
+                if force or current_terminfo != terminfo_value:
+                    exports.append(f"export TERMINFO={terminfo_value}")
             verbose(f"XTGETTCAP supported, terminal: {tn}", verbose_enabled)
             verbose("terminfo already available in system database", verbose_enabled)
             return exports
@@ -893,16 +911,21 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         terminfo_dir = ttyscan_terminfo_dir()
         safe_term = sanitize_term_name(tn)
 
-        if not has_terminfo(tn) or force:
+        if (not has_terminfo(tn)
+                and not terminfo_installed_at(safe_term, terminfo_dir)) or force:
             write_terminfo(tn, str_caps, num_caps, bool_caps, terminfo_dir)
             verbose(f"writing {terminfo_file_path(safe_term, terminfo_dir)}",
                     verbose_enabled)
-            terminfo_value = str(terminfo_dir)
-            current_terminfo = os.environ.get("TERMINFO")
-            if force or current_terminfo != terminfo_value:
-                exports.append(f"export TERMINFO={terminfo_value}")
-        else:
+        elif has_terminfo(tn):
             verbose("terminfo already available in system database", verbose_enabled)
+        elif terminfo_installed_at(safe_term, terminfo_dir):
+            verbose(f"terminfo exists at {terminfo_file_path(safe_term, terminfo_dir)}",
+                    verbose_enabled)
+
+        if force or not has_terminfo(tn):
+            terminfo_value = str(terminfo_dir)
+            if force or os.environ.get("TERMINFO") != terminfo_value:
+                exports.append(f"export TERMINFO={terminfo_value}")
 
         if termcap:
             entry = build_termcap_entry(tn, str_caps, num_caps, bool_caps)
