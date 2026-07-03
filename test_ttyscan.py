@@ -916,7 +916,7 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
      ["export TERM=", "export TERMINFO=", "export LINES=", "export COLUMNS="]),
 ])
 def test_decrqss_probe_pty(flags, responses, env_extra, expected,
-                            not_expected, tmp_path):
+                           not_expected, tmp_path):
     """PTY integration: DECRQSS truecolor probe scenarios."""
     env = {
         **dict(os.environ),

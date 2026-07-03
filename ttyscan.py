@@ -17,7 +17,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.8"
+__version__ = "0.0.9"
 
 
 def warn(msg):
@@ -43,6 +43,7 @@ except ValueError:
 _READ_BUFFER = b''
 
 _CANONICAL_BOOL_CAPS = [
+    "AX",
     "bw", "am", "xsb", "xhp", "xenl", "eo", "gn", "hc", "km", "hs",
     "in", "da", "db", "mir", "msgr", "os", "eslok", "xt", "hz", "ul",
     "xon", "nxon", "mc5i", "chts", "nrrmc", "npc", "ndscr", "ccc", "bce",
@@ -54,6 +55,7 @@ _CANONICAL_NUM_CAPS = [
     "cols", "it", "lines", "lm", "xmc", "pb", "vt", "wsl", "nlab",
     "lh", "lw", "ma", "wnum", "colors", "pairs", "ncv", "bufsz",
     "spinv", "spinh", "maddr", "mjump", "mcs", "mls", "npins",
+    "U8",
     "orc", "orl", "orhi", "orvi", "cps", "widcs", "btns",
     "bitwin", "bitype", "OTug", "OTdC", "OTdN", "OTdB", "OTdT", "OTkn",
 ]
@@ -108,6 +110,9 @@ _CANONICAL_STR_CAPS = [
     "sgr1", "slength", "OTi2", "OTrs", "OTnl", "OTbc", "OTko", "OTma",
     "OTG2", "OTG3", "OTG1", "OTG4", "OTGR", "OTGL", "OTGU", "OTGD",
     "OTGH", "OTGV", "OTGC", "meml", "memu", "box1",
+    # user-defined (extended) capabilities
+    "BD", "BE", "Cr", "Cs", "E3", "Ms", "PE", "PS", "Rmol", "RV",
+    "S0", "Se", "Setulc", "Smol", "Smulx", "Ss", "TS", "XM", "XR",
 ]
 
 _INIT_XTGETTCAP_CAPS = frozenset((
