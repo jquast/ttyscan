@@ -116,6 +116,41 @@ def _pty_run_staggered(args, env, responses, timeout=5.0):
     return output.decode("utf-8", errors="replace"), status
 
 
+def test_xtgettcap_query_counts_replies():
+    """The reply count separates a short batch from a selective terminal."""
+    import re as _re
+    from ttyscan import xtgettcap_query, _RE_CPR_BOUNDARY
+
+    first = ("\x1bP1+r544e=787465726d\x1b\\\x1bP0+r636f6c6f7273\x1b\\"
+             + "\x1b[31;128R")
+    fence = _re.search(_RE_CPR_BOUNDARY, first)
+
+    with patch('ttyscan.read_until', return_value=(fence, first)), \
+            patch('ttyscan.write_all'):
+        caps, answered = xtgettcap_query(3, 4, ['TN', 'colors'], 10.0)
+
+    assert caps == {'TN': 'xterm'}
+    assert answered == 2
+
+
+@pytest.mark.parametrize("init_answered,answered,expected", [
+    (10, 190, ""),
+    (10, 113, "XTGETTCAP: 113 of 190 queries answered, the batch may be truncated"),
+    (3, 100, ""),
+])
+def test_check_xtgettcap_replies(init_answered, answered, expected):
+    """A short batch warns only for a terminal that answered the first batch."""
+    from ttyscan import check_xtgettcap_replies
+
+    with patch('ttyscan.warn') as mock_warn:
+        check_xtgettcap_replies(init_answered, 10, answered, 190)
+
+    if expected:
+        mock_warn.assert_called_once_with(expected)
+    else:
+        mock_warn.assert_not_called()
+
+
 @pytest.mark.parametrize("name,hexstr", [("TN", "544e"), ("RGB", "524742")])
 def test_hex_encode(name, hexstr):
     """Encode ASCII string to hex."""

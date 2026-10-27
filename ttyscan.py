@@ -387,13 +387,16 @@ def read_cpr(r_fd, w_fd, timeout, minimum=None):
 
 
 def xtgettcap_query(r_fd, w_fd, caps, timeout):
+    """Return the capabilities for *caps* with the number of replies received."""
     if not caps:
-        return {}
+        return {}, 0
     queries = [f'\x1bP+q{hex_encode(c)}\x1b\\' for c in caps]
     match, data = read_until(r_fd, w_fd, queries, _RE_CPR_BOUNDARY.pattern, timeout)
     data = data[:match.start()] + data[match.end():]
     capabilities = {}
+    answered = 0
     for m in _RE_XTGETTCAP_RESPONSE.finditer(data):
+        answered += 1
         if m.group(1) == '1':
             name = hex_decode(m.group(2))
             val_hex = m.group(3)
@@ -402,7 +405,19 @@ def xtgettcap_query(r_fd, w_fd, caps, timeout):
             else:
                 value = ''
             capabilities[name] = value
-    return capabilities
+    return capabilities, answered
+
+
+def check_xtgettcap_replies(init_answered, init_asked, answered, asked):
+    """Warn when a terminal that answered every opening query lost replies.
+
+    A terminal that answers unknown capabilities with a refusal answers every
+    query, so a short batch means the reply was cut.  A terminal that answers
+    only selected capabilities is short by nature and says nothing.
+    """
+    if init_answered == init_asked and answered < asked:
+        warn(f"XTGETTCAP: {answered} of {asked} queries answered, "
+             f"the batch may be truncated")
 
 
 def _parse_xtversion_text(text):
@@ -771,8 +786,8 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
     try:
         winsize = get_winsize(r_fd)
 
-        init_caps = xtgettcap_query(r_fd, w_fd, _INIT_XTGETTCAP_CAPS,
-                                    timeout=_TTYSCAN_QUERY_TIMEOUT)
+        init_caps, init_answered = xtgettcap_query(
+            r_fd, w_fd, _INIT_XTGETTCAP_CAPS, timeout=_TTYSCAN_QUERY_TIMEOUT)
 
         exports = []
 
@@ -865,9 +880,11 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         remaining_caps = [c for c in _FULL_XTGETTCAP_CAPS
                           if c not in _INIT_XTGETTCAP_CAPS]
         t0 = time.monotonic()
-        full_caps = xtgettcap_query(r_fd, w_fd, remaining_caps,
-                                    timeout=_TTYSCAN_QUERY_TIMEOUT)
+        full_caps, full_answered = xtgettcap_query(
+            r_fd, w_fd, remaining_caps, timeout=_TTYSCAN_QUERY_TIMEOUT)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
+        check_xtgettcap_replies(init_answered, len(_INIT_XTGETTCAP_CAPS),
+                                full_answered, len(remaining_caps))
 
         full_caps.update(init_caps)
         classified = classify_caps(full_caps)
@@ -880,6 +897,7 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
             f"XTGETTCAP supported, terminal: {tn}; "
             f"received {n_caps} caps "
             f"({len(bool_caps)} bool, {len(num_caps)} num, {len(str_caps)} str) "
+            f"from {full_answered} of {len(remaining_caps)} replies "
             f"in {elapsed_ms}ms",
             verbose_enabled,
         )
