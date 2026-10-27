@@ -25,22 +25,12 @@ def warn(msg):
 
 
 try:
-    _TTYSCAN_QUERY_TIMEOUT = float(os.environ.get('TTYSCAN_QUERY_TIMEOUT', '1.0'))
+    _TTYSCAN_QUERY_TIMEOUT = float(os.environ.get('TTYSCAN_QUERY_TIMEOUT', '10.0'))
 except ValueError:
     warn(f"TTYSCAN_QUERY_TIMEOUT value "
          f"{os.environ['TTYSCAN_QUERY_TIMEOUT']!r} "
-         f"is not a valid float, using default 1.0")
-    _TTYSCAN_QUERY_TIMEOUT = 1.0
-
-try:
-    _TTYSCAN_DRAIN_TIMEOUT = float(os.environ.get('TTYSCAN_DRAIN_TIMEOUT', '0.2'))
-except ValueError:
-    warn(f"TTYSCAN_DRAIN_TIMEOUT value "
-         f"{os.environ['TTYSCAN_DRAIN_TIMEOUT']!r} "
-         f"is not a valid float, using default 0.2")
-    _TTYSCAN_DRAIN_TIMEOUT = 0.2
-
-_READ_BUFFER = b''
+         f"is not a valid float, using default 10.0")
+    _TTYSCAN_QUERY_TIMEOUT = 10.0
 
 _CANONICAL_BOOL_CAPS = [
     "AX",
@@ -310,11 +300,7 @@ def write_all(fd, data):
 
 
 def read_available(r_fd, timeout):
-    global _READ_BUFFER
     buf = bytearray()
-    if _READ_BUFFER:
-        buf.extend(_READ_BUFFER)
-        _READ_BUFFER = b''
     stime = time.monotonic()
     max_size = 131072
     while True:
@@ -341,7 +327,18 @@ def read_available(r_fd, timeout):
     return bytes(buf)
 
 
+class NoCPRReply(Exception):
+    """Raised when the terminal does not answer a cursor position report."""
+
+
 def read_until(r_fd, w_fd, queries, pattern, timeout):
+    """Read until ``pattern`` matches, using a cursor position report as fence.
+
+    The fence reply proves the terminal is answering, and a missing reply means
+    nothing will arrive.  Bytes after the fence belong to no query: a late
+    reply, or a keystroke typed meanwhile, and a tty read cannot hand either
+    back.
+    """
     for q in queries:
         write_all(w_fd, q)
     write_all(w_fd, b'\x1b[6n')
@@ -351,41 +348,49 @@ def read_until(r_fd, w_fd, queries, pattern, timeout):
     while True:
         timeleft = timeout - (time.monotonic() - stime)
         if timeleft <= 0:
-            break
+            raise NoCPRReply("no cursor position report")
         raw = read_available(r_fd, timeleft)
         if not raw:
-            break
+            raise NoCPRReply("no cursor position report")
         buf += raw.decode('latin-1', errors='replace')
         match = re.search(pattern, buf)
         if match is not None:
             return match, buf
         if len(buf) > max_size:
-            break
-    return None, buf
+            raise NoCPRReply("no fence in 128 KiB of input")
+
+
+def read_cpr(r_fd, w_fd, timeout, minimum=None):
+    """Read a cursor position report and return ``(rows, cols)``.
+
+    ``minimum`` is the ``(cols, rows)`` size of the tty.  A probe that parks the
+    cursor past the last cell is answered with at least the screen size, so a
+    smaller report is a late answer to an earlier query and is skipped.
+    Raises ``NoCPRReply`` when no acceptable report arrives before ``timeout``.
+    """
+    write_all(w_fd, b'\x1b[6n')
+    stime = time.monotonic()
+    buf = ''
+    while True:
+        timeleft = timeout - (time.monotonic() - stime)
+        if timeleft <= 0:
+            raise NoCPRReply("no cursor position report")
+        raw = read_available(r_fd, timeleft)
+        if not raw:
+            raise NoCPRReply("no cursor position report")
+        buf += raw.decode('latin-1', errors='replace')
+        for match in _RE_CPR.finditer(buf):
+            rows = int(match.group(1))
+            cols = int(match.group(2))
+            if minimum is None or (rows >= minimum[1] and cols >= minimum[0]):
+                return rows, cols
 
 
 def xtgettcap_query(r_fd, w_fd, caps, timeout):
-    global _READ_BUFFER
     if not caps:
         return {}
     queries = [f'\x1bP+q{hex_encode(c)}\x1b\\' for c in caps]
     match, data = read_until(r_fd, w_fd, queries, _RE_CPR_BOUNDARY.pattern, timeout)
-    if match is None:
-        return {}
-    drain_deadline = time.monotonic() + _TTYSCAN_DRAIN_TIMEOUT
-    while time.monotonic() < drain_deadline:
-        remaining = drain_deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        raw = read_available(r_fd, min(remaining, 0.05))
-        if not raw:
-            continue
-        decoded = raw.decode('latin-1', errors='replace')
-        if _RE_XTGETTCAP_RESPONSE.search(decoded):
-            data += decoded
-        else:
-            _READ_BUFFER = raw + _READ_BUFFER
-            break
     data = data[:match.start()] + data[match.end():]
     capabilities = {}
     for m in _RE_XTGETTCAP_RESPONSE.finditer(data):
@@ -415,8 +420,6 @@ def _parse_xtversion_text(text):
 def xtversion_query(r_fd, w_fd, timeout):
     match, data = read_until(r_fd, w_fd, ['\x1b[>q'],
                              _RE_CPR_BOUNDARY.pattern, timeout)
-    if match is None:
-        return None
     data = data[:match.start()] + data[match.end():]
     for m in _RE_XTVERSION_RESPONSE.finditer(data):
         return _parse_xtversion_text(m.group(1))
@@ -424,13 +427,10 @@ def xtversion_query(r_fd, w_fd, timeout):
 
 
 def decrqm_query(r_fd, w_fd, mode, timeout):
-    result = read_until(r_fd, w_fd,
-                        [f'\x1b[?{mode}$p'],
-                        _RE_CPR_BOUNDARY.pattern, timeout)
-    match = result[0]
-    if match is None:
-        return None
-    data = result[1][:match.start()] + result[1][match.end():]
+    match, data = read_until(r_fd, w_fd,
+                             [f'\x1b[?{mode}$p'],
+                             _RE_CPR_BOUNDARY.pattern, timeout)
+    data = data[:match.start()] + data[match.end():]
     for m in _RE_DECRPM.finditer(data):
         if int(m.group(1)) == mode:
             return int(m.group(2))
@@ -448,8 +448,6 @@ def decqss_query(r_fd, w_fd, setting_id, timeout):
     match, data = read_until(r_fd, w_fd,
                              [f'\x1bP$q{setting_id}\x1b\\'],
                              _RE_CPR_BOUNDARY.pattern, timeout)
-    if match is None:
-        return None
     data = data[:match.start()] + data[match.end():]
     for m in _RE_DECRQSS_RESPONSE.finditer(data):
         if m.group(1) == '1':
@@ -494,14 +492,14 @@ def probe_truecolor(r_fd, w_fd, timeout, verbose_enabled):
     return result
 
 
-def detect_size(r_fd, w_fd, verbose_enabled):
-    decrpm = decrqm_query(r_fd, w_fd, 2048, 0.25)
+def detect_size(r_fd, w_fd, winsize, verbose_enabled, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    decrpm = decrqm_query(r_fd, w_fd, 2048, timeout)
     has_inband = decrpm is not None and decrpm == 2
 
     if has_inband:
-        write_all(w_fd, '\x1b[?2048h')
-        raw = read_available(r_fd, 0.25).decode('latin-1', errors='replace')
-        resize_match = _RE_RESIZE.search(raw)
+        cpr_match, data = read_until(r_fd, w_fd, ['\x1b[?2048h'],
+                                     _RE_CPR.pattern, timeout)
+        resize_match = _RE_RESIZE.search(data[:cpr_match.start()])
         if resize_match:
             rows = int(resize_match.group(1))
             cols = int(resize_match.group(2))
@@ -509,39 +507,20 @@ def detect_size(r_fd, w_fd, verbose_enabled):
             write_all(w_fd, '\x1b[?2048l')
             return rows, cols, 'inband'
 
-    cpr1_match, data = read_until(r_fd, w_fd, [], _RE_CPR.pattern, 0.25)
-    orig_y = orig_x = None
-    if cpr1_match:
-        orig_y = int(cpr1_match.group(1))
-        orig_x = int(cpr1_match.group(2))
-
-    write_all(w_fd, '\x1b[1000;1000H')
-    cpr2_match, _ = read_until(r_fd, w_fd, [], _RE_CPR.pattern, 0.25)
+    write_all(w_fd, '\x1b7\x1b[1000;1000H')
+    size = read_cpr(r_fd, w_fd, timeout, minimum=winsize)
+    write_all(w_fd, '\x1b8')
 
     if has_inband:
         write_all(w_fd, '\x1b[?2048l')
 
-    if orig_y is not None:
-        write_all(w_fd, f'\x1b[{orig_y};{orig_x}H')
-
-    if cpr2_match:
-        rows = int(cpr2_match.group(1))
-        cols = int(cpr2_match.group(2))
+    if size is not None:
+        rows, cols = size
         if rows == 999 or cols == 999:
             verbose(f"rejecting bogus CPR size {rows}x{cols}", verbose_enabled)
             return None
-        verbose(f"size via dual CPR: {rows}x{cols}", verbose_enabled)
+        verbose(f"size via CPR: {rows}x{cols}", verbose_enabled)
         return rows, cols, 'cpr'
-
-    verbose("CPR size detection", verbose_enabled)
-    write_all(w_fd, '\x1b[1000;1000H')
-    fb_match, _ = read_until(r_fd, w_fd, [], _RE_CPR.pattern, 0.25)
-    if fb_match:
-        rows = int(fb_match.group(1))
-        cols = int(fb_match.group(2))
-        if rows != 999 and cols != 999:
-            verbose(f"size via CPR: {rows}x{cols}", verbose_enabled)
-            return rows, cols, 'fallback_cpr'
 
     verbose("size detection failed", verbose_enabled)
     return None
@@ -831,7 +810,7 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         if decrqss_tc:
             exports.append("export COLORTERM=truecolor")
 
-        size = detect_size(r_fd, w_fd, verbose_enabled)
+        size = detect_size(r_fd, w_fd, winsize, verbose_enabled)
         if size:
             rows, cols, source = size
             term_cols, term_rows = winsize
@@ -981,11 +960,15 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    exports = generate_exports(
-        verbose_enabled=args.verbose,
-        force=args.force,
-        termcap=args.termcap,
-    )
+    try:
+        exports = generate_exports(
+            verbose_enabled=args.verbose,
+            force=args.force,
+            termcap=args.termcap,
+        )
+    except NoCPRReply as exc:
+        sys.exit(f"ttyscan: {exc} (is this an interactive terminal?)")
+
     for line in exports:
         print(line)
 

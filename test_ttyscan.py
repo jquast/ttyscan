@@ -25,6 +25,8 @@ from ttyscan import (
     normalize_terminal_name,
     pack_short_le,
     probe_truecolor,
+    read_cpr,
+    read_until,
     sanitize_term_name,
     shell_escape,
     terminfo_file_path,
@@ -33,59 +35,45 @@ from ttyscan import (
     unescape_terminfo,
     verbose,
     warn,
+    NoCPRReply,
     _parse_xtversion_text,
     xtversion_query,
 )
 from ttyscan import write_terminfo as _write_terminfo
 
 
+def _split_replies(response):
+    """Split canned replies into one segment per cursor position fence."""
+    import re
+    segments = []
+    start = 0
+    for match in re.finditer(rb"\x1b\[[0-9]+;[0-9]+R", response):
+        segments.append(response[start:match.end()])
+        start = match.end()
+    if start < len(response):
+        segments.append(response[start:])
+    return segments
+
+
 def _pty_run(args, env, response, timeout=5.0):
     """Run a command in a PTY child with canned terminal response.
 
+    Each segment of ``response``, delimited by a cursor position report, is
+    written when the child writes the matching fence, as a terminal answers
+    queries in order.  A child that outruns the canned replies waits for them.
     Returns ``(output_text, wait_status)``.
     """
-    import fcntl
-    import select
-    import struct
-    import termios
-
-    pid, master_fd = os.forkpty()
-    if pid == 0:
-        os.execve(sys.executable, args, env)
-        os._exit(1)
-
-    winsize = struct.pack("HHHH", 31, 128, 0, 0)
-    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-    attrs = termios.tcgetattr(master_fd)
-    attrs[3] = attrs[3] & ~termios.ECHO
-    termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
-
-    os.write(master_fd, response)
-
-    output = b""
-    deadline = __import__("time").monotonic() + timeout
-    while __import__("time").monotonic() < deadline:
-        ready, _, _ = select.select([master_fd], [], [], 0.3)
-        if ready:
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output += chunk
-
-    _, status = os.waitpid(pid, 0)
-    return output.decode("utf-8", errors="replace"), status
+    return _pty_run_staggered(
+        args, env, [(0.0, segment) for segment in _split_replies(response)],
+        timeout=timeout)
 
 
 def _pty_run_staggered(args, env, responses, timeout=5.0):
-    """Run a command in a PTY child, writing response chunks with delays.
+    """Run a command in a PTY child, answering fence k with responses[k].
 
-    ``responses`` is a list of ``(delay_sec, data)`` tuples.  Each chunk
-    is written after its corresponding delay, allowing multiple
-    ``read_until`` rounds to consume separate response segments.
-    Returns ``(output_text, wait_status)``.
+    ``responses`` is a list of ``(delay_sec, data)`` tuples; each chunk is
+    written once the child has asked for it, after its delay.  Returns
+    ``(output_text, wait_status)``.
     """
     import fcntl
     import select
@@ -104,31 +92,25 @@ def _pty_run_staggered(args, env, responses, timeout=5.0):
     termios.tcsetattr(master_fd, termios.TCSANOW, attrs)
 
     output = b""
+    sent = 0
     deadline = __import__("time").monotonic() + timeout
-    for delay, chunk in responses:
-        __import__("time").sleep(delay)
-        os.write(master_fd, chunk)
-        if __import__("time").monotonic() >= deadline:
-            break
-        ready, _, _ = select.select([master_fd], [], [], 0.3)
-        if ready:
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            output += chunk
-
-    # drain remaining output
     while __import__("time").monotonic() < deadline:
-        ready, _, _ = select.select([master_fd], [], [], 0.3)
-        if ready:
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output += chunk
+        ready, _, _ = select.select([master_fd], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(master_fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output += chunk
+        fences = output.count(b"\x1b[6n")
+        while sent < fences and sent < len(responses):
+            delay, reply = responses[sent]
+            __import__("time").sleep(delay)
+            os.write(master_fd, reply)
+            sent += 1
 
     _, status = os.waitpid(pid, 0)
     return output.decode("utf-8", errors="replace"), status
@@ -385,15 +367,11 @@ def test_check_term_program(name, version, force, env, expected):
         assert check_term_program(name, version, force) == expected
 
 
-@pytest.mark.parametrize("read_until_result,expected", [
-    ((None, ""), None),
-    ((None, "\x1bP>|kitty(0.24.2)\x1b\\"), None),
-    ((None, "\x1b[31;128R"), None),
-])
-def test_xtversion_query_no_cpr(read_until_result, expected):
-    """xtversion_query returns None when CPR boundary not found."""
-    with patch('ttyscan.read_until', return_value=read_until_result):
-        assert xtversion_query(3, 4, 0.25) is expected
+def test_xtversion_query_no_cpr():
+    """xtversion_query propagates the missing cursor position report."""
+    with patch('ttyscan.read_until', side_effect=NoCPRReply("no cursor position report")):
+        with pytest.raises(NoCPRReply):
+            xtversion_query(3, 4, 0.25)
 
 
 @pytest.mark.parametrize("data,expected_name,expected_version", [
@@ -482,23 +460,6 @@ def test_write_terminfo(tmp_path, term, str_caps, num_caps, bool_caps):
     fpath = terminfo_file_path(safe, tmp_path)
     assert fpath.exists()
     assert fpath.stat().st_size > 0
-
-
-@pytest.mark.parametrize("setting_id,read_until_result,expected", [
-    ("m",
-     (None, ""),
-     None),
-    ("m",
-     (None, "\x1bP1$r0m\x1b\\"),
-     None),
-    ("m",
-     (None, "\x1b[31;128R"),
-     None),
-])
-def test_decqss_query_no_cpr(setting_id, read_until_result, expected):
-    """decqss_query returns None when CPR boundary not found."""
-    with patch('ttyscan.read_until', return_value=read_until_result):
-        assert decqss_query(3, 4, setting_id, 0.25) is expected
 
 
 @pytest.mark.parametrize("setting_id,buf,expected", [
@@ -593,10 +554,16 @@ def test_main_subprocess():
         "TTYSCAN_QUERY_TIMEOUT": "0.25",
     }
     env.pop("COLORTERM", None)
+    env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
-    response = _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] \
-        + _XT_RESP["clear"] + _XT_RESP["am"] + _CPR_31_128
+    response = _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] + _CPR_31_128 \
+        + _XT_RESP["xtversion_kitty"] + _CPR_5_10 \
+        + _CPR_6_7 \
+        + _DECRPM_none + _CPR_5_10 \
+        + _CPR_999_999 \
+        + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"] \
+        + _CPR_31_128
 
     text, status = _pty_run(
         [sys.executable, "-m", "ttyscan", "-f"],
@@ -615,7 +582,7 @@ def test_ttyscan_query_timeout_bad_value():
          "import ttyscan; print(ttyscan._TTYSCAN_QUERY_TIMEOUT)"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
     )
-    assert result.stdout.strip() == "1.0"
+    assert result.stdout.strip() == "10.0"
     assert "is not a valid float" in result.stderr
 
 
@@ -675,53 +642,79 @@ def test_write_all_none_fd():
     write_all(None, b"data")
 
 
-@pytest.mark.parametrize("decrpm,read_available_raw,read_until_responses,expected", [
-    (2, b"\x1b[48;31;128;0;0t", None, (31, 128, 'inband')),
-    (2, b"",
-     [("31;128R", "31;128R"), ("31;128R", "31;128R")],
-     (31, 128, 'cpr')),
-    (2, b"",
-     [("31;128R", "31;128R"), ("999;999R", "999;999R")],
-     None),
-    (None, None,
-     [("31;128R", "31;128R"), ("31;128R", "31;128R")],
-     (31, 128, 'cpr')),
-    (None, None,
-     [("31;128R", "31;128R"), ("999;999R", "999;999R")],
-     None),
-    (None, None,
-     [("31;128R", "31;128R"), (None, None), ("5;10R", "5;10R")],
-     (5, 10, 'fallback_cpr')),
-    (None, None,
-     [(None, None), (None, None), (None, None)],
-     None),
-    (None, None,
-     [("31;128R", "31;128R"), (None, None), ("999;999R", "999;999R")],
-     None),
+@pytest.mark.parametrize("decrpm,resize_report,cpr,expected", [
+    (2, "\x1b[48;31;128;0;0t", None, (31, 128, 'inband')),
+    (2, None, (31, 128), (31, 128, 'cpr')),
+    (2, None, None, None),
+    (None, None, (31, 128), (31, 128, 'cpr')),
+    (None, None, (999, 999), None),
+    (None, None, None, None),
 ])
-def test_detect_size(decrpm, read_available_raw, read_until_responses, expected):
-    from ttyscan import detect_size, _RE_CPR
+def test_detect_size(decrpm, resize_report, cpr, expected):
+    from ttyscan import detect_size, _RE_CPR, _TTYSCAN_QUERY_TIMEOUT
     import re as _re
 
-    def _make_response(pair):
-        if pair[0] is None:
-            return (None, b"")
-        m = _re.search(_RE_CPR, f"\x1b[{pair[0]}")
-        return (m, b"some data")
-
-    side_effect = [_make_response(p) for p in read_until_responses] \
-        if read_until_responses is not None else None
+    data = (resize_report or "") + "\x1b[31;128R"
+    fenced = (_re.search(_RE_CPR, data), data)
 
     with patch('ttyscan.decrqm_query', return_value=decrpm), \
-            patch('ttyscan.read_available', return_value=read_available_raw), \
-            patch('ttyscan.read_until', side_effect=side_effect) as mock_read_until, \
-            patch('ttyscan.write_all'), \
+            patch('ttyscan.read_until', return_value=fenced) as mock_read_until, \
+            patch('ttyscan.read_cpr', return_value=cpr) as mock_read_cpr, \
+            patch('ttyscan.write_all') as mock_write_all, \
             patch('ttyscan.verbose'):
-        result = detect_size(3, 4, False)
+        result = detect_size(3, 4, (128, 31), False)
 
     assert result == expected
     if expected == (31, 128, 'inband'):
-        mock_read_until.assert_not_called()
+        mock_read_until.assert_called_once_with(
+            3, 4, ['\x1b[?2048h'], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT)
+        mock_read_cpr.assert_not_called()
+        mock_write_all.assert_any_call(4, '\x1b[?2048l')
+    else:
+        mock_read_cpr.assert_called_once_with(3, 4, _TTYSCAN_QUERY_TIMEOUT,
+                                              minimum=(128, 31))
+        mock_write_all.assert_any_call(4, '\x1b7\x1b[1000;1000H')
+        mock_write_all.assert_any_call(4, '\x1b8')
+        if decrpm != 2:
+            mock_read_until.assert_not_called()
+
+
+@pytest.mark.parametrize("chunks,minimum,expected", [
+    ([b"\x1b[28;1R\x1b[28;101R"], (101, 28), (28, 101)),
+    ([b"\x1b[28;1R", b"\x1b[28;101R"], (101, 28), (28, 101)),
+    ([b"\x1b[28;1", b"01R"], (101, 28), (28, 101)),
+    ([b"\x1b[28;1R"], None, (28, 1)),
+])
+def test_read_cpr(chunks, minimum, expected):
+    with patch('ttyscan.read_available', side_effect=chunks), \
+            patch('ttyscan.write_all') as mock_write_all:
+        assert read_cpr(3, 4, 0.25, minimum=minimum) == expected
+    mock_write_all.assert_called_once_with(4, b'\x1b[6n')
+
+
+@pytest.mark.parametrize("chunks,minimum", [
+    ([b"\x1b[28;1R", b""], (101, 28)),
+    ([b""], (101, 28)),
+    ([b"\x1b[28;1R", b""], (101, 28)),
+])
+def test_read_cpr_no_acceptable_reply(chunks, minimum):
+    with patch('ttyscan.read_available', side_effect=chunks):
+        with pytest.raises(NoCPRReply):
+            read_cpr(3, 4, 0.25, minimum=minimum)
+
+
+def test_read_until_no_reply():
+    with patch('ttyscan.read_available', return_value=b""), \
+            patch('ttyscan.write_all'):
+        with pytest.raises(NoCPRReply):
+            read_until(3, 4, [], r'\x1b\[\d+;\d+R', 0.25)
+
+
+def test_read_until_no_fence_in_flood():
+    with patch('ttyscan.read_available', return_value=b"x" * 4096), \
+            patch('ttyscan.write_all'):
+        with pytest.raises(NoCPRReply):
+            read_until(3, 4, [], r'\x1b\[\d+;\d+R', 10.0)
 
 
 # Canned XTGETTCAP responses for PTY tests.
@@ -752,56 +745,79 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 @pytest.mark.parametrize("flags,response,expected,not_expected", [
-    # force+termcap, full query, terminfo+termcap exported
     ("-vft",
      _XT_RESP["tn_xterm"] + _CPR_31_128
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999
      + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
      + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
      ["export TERM=xterm", "export TERMINFO=", "export TERMCAP="],
      []),
-    # bogus CPR (999) rejection: no LINES/COLUMNS, still exports TERMINFO/TERMCAP
     ("-vft",
      _XT_RESP["tn_xterm"] + _CPR_31_128
-     + _DECRPM_none + _CPR_6_7 + _CPR_5_10 + _CPR_999_999
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999
      + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
      + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
      ["export TERM=xterm", "export TERMINFO=", "export TERMCAP="],
      ["export LINES=", "export COLUMNS="]),
-    # no force/termcap, has_terminfo skips full query (TERM exported, none else)
     ("-v",
-     _XT_RESP["tn_xterm"] + _CPR_31_128,
+     _XT_RESP["tn_xterm"] + _CPR_31_128
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999,
      ["export TERM=xterm"],
      ["export TERMINFO=", "export TERMCAP=", "export LINES=", "export COLUMNS="]),
-    # XTGETTCAP not supported: empty response, no exports
     ("-vft",
-     b"",
+     _CPR_31_128
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999,
      ["XTGETTCAP not supported by this terminal"],
      ["export TERM=", "export TERMINFO=", "export TERMCAP=",
       "export LINES=", "export COLUMNS="]),
-    # no TN capability in response
     ("-vft",
-     _XT_RESP["colors_256"] + _CPR_31_128,
+     _XT_RESP["colors_256"] + _CPR_31_128
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999,
      ["no TN (terminal name) capability"],
      ["export TERM=", "export TERMINFO=", "export TERMCAP=",
       "export LINES=", "export COLUMNS="]),
-    # RGB=8/8/8 triggers COLORTERM=truecolor export
     ("-vft",
-     _XT_RESP["tn_xterm"] + _CPR_31_128
-     + _XT_RESP["rgb_8_8_8"] + _XT_RESP["colors_256"]
-     + _XT_RESP["clear"] + _XT_RESP["am"]
+     _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128
+     + _CPR_5_10
+     + _DECRQSS_SGR_ORIGINAL + _CPR_6_7
+     + _DECRQSS_SGR_TRUECOLOR + _CPR_5_10
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999
+     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
      + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
      ["export COLORTERM=truecolor", "export TERM=xterm",
       "export TERMINFO=", "export TERMCAP="],
      []),
-    # bare-minimum caps (only TN+colors): skips TERMINFO/TERMCAP
     ("-vft",
-     _XT_RESP["tn_xterm"] + _CPR_31_128
+     _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] + _CPR_31_128
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999
      + _XT_RESP["colors_256"] + _CPR_31_128,
      ["export TERM=xterm"],
      ["export TERMINFO=", "export TERMCAP=", "export COLORTERM="]),
-    # nonexistent TN (has_terminfo=False): full query path, exports TERMINFO
     ("-v",
      _XT_RESP["tn_nonexist"] + _CPR_31_128
+     + _CPR_5_10
+     + _CPR_6_7
+     + _DECRPM_none + _CPR_5_10
+     + _CPR_999_999
      + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
      + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
      ["export TERM=nonexist", "export TERMINFO="],
@@ -819,6 +835,7 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         "COVERAGE_FILE": project_coverage,
     }
     env.pop("COLORTERM", None)
+    env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
     text, _ = _pty_run(
@@ -840,6 +857,58 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         terminfo_file = terminfo_file_path(safe, terminfo_dir)
         assert terminfo_file.exists()
         assert terminfo_file.stat().st_size > 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+def test_size_probe_waits_for_late_cpr(tmp_path):
+    """A cursor report later than the old 0.25s window still yields the size."""
+    env = {
+        **dict(os.environ),
+        "XDG_CONFIG_HOME": str(tmp_path),
+        "TTYSCAN_QUERY_TIMEOUT": "2.0",
+        "TERM_PROGRAM": "xterm",
+        "COLORTERM": "truecolor",
+        "COVERAGE_FILE": os.path.join(os.path.dirname(__file__), ".coverage"),
+        "TERM": "dumb",
+    }
+    responses = [
+        (0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+        (0.1, _XTVERSION_XTERM + _CPR_5_10),
+        (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_6_7),
+        (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_5_10),
+        (0.6, _DECRPM_none + _CPR_5_10),
+        (0.6, _CPR_31_128),
+        (0.1, _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
+         + _CPR_31_128),
+    ]
+
+    text, status = _pty_run_staggered(
+        [sys.executable, "-m", "coverage", "run", "--append", "-m", "ttyscan", "-vf"],
+        env, responses)
+
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == 0
+    assert "export LINES=31" in text
+    assert "export COLUMNS=128" in text
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+def test_main_exits_without_cpr(tmp_path):
+    env = {
+        **dict(os.environ),
+        "XDG_CONFIG_HOME": str(tmp_path),
+        "TTYSCAN_QUERY_TIMEOUT": "0.2",
+        "COVERAGE_FILE": os.path.join(os.path.dirname(__file__), ".coverage"),
+        "TERM": "dumb",
+    }
+
+    text, status = _pty_run(
+        [sys.executable, "-m", "coverage", "run", "--append", "-m", "ttyscan"],
+        env, b"")
+
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == 1
+    assert "no cursor position report" in text
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
@@ -910,7 +979,9 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
     ("-v",
      [(0.0, _CPR_31_128),
       (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7)],
+      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
+      (0.1, _DECRPM_none + _CPR_5_10),
+      (0.1, _CPR_999_999)],
      {"TERM_PROGRAM": "xterm"},
      ["export COLORTERM=truecolor"],
      ["export TERM=", "export TERMINFO=", "export LINES=", "export COLUMNS="]),
