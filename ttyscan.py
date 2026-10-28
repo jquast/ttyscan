@@ -107,8 +107,7 @@ _FULL_XTGETTCAP_CAPS = tuple(
     sorted(set(_CANONICAL_BOOL_CAPS) | set(_CANONICAL_NUM_CAPS) | set(_CANONICAL_STR_CAPS))
 )
 
-# VTE-based terminals (GNOME Terminal, et al.) send malformed ``\\x1bP0+r\\x1b\\\\``
-# (empty hex name) for unsupported capabilities, so zero-or-more hex digits.
+# VTE terminals reply "\x1bP0+r\x1b\\" for unsupported caps: zero hex digits.
 _RE_XTGETTCAP_RESPONSE = re.compile(
     r'\x1bP([01])\+r([0-9a-fA-F]*)(?:=([0-9a-fA-F]*))?\x1b\\')
 _RE_XTVERSION_RESPONSE = re.compile(r'\x1bP>\|(.+?)\x1b\\')
@@ -301,12 +300,9 @@ class NoCPRReply(Exception):
 
 def read_until(fd, queries, pattern=_RE_CPR_BOUNDARY.pattern,
                timeout=_TTYSCAN_QUERY_TIMEOUT):
-    """Read until ``pattern`` matches, using a cursor position report as fence.
+    """Return the first ``pattern`` match in a reply fenced by a cursor position report.
 
-    The fence reply proves the terminal is answering, and a missing reply means
-    nothing will arrive.  Bytes after the fence belong to no query: a late
-    reply, or a keystroke typed meanwhile, and a tty read cannot hand either
-    back.
+    Bytes after the fence belong to no query and cannot be pushed back to the tty.
     """
     for q in queries:
         write_all(fd, q)
@@ -323,12 +319,9 @@ def read_until(fd, queries, pattern=_RE_CPR_BOUNDARY.pattern,
 
 
 def read_cpr(fd, timeout=_TTYSCAN_QUERY_TIMEOUT, minimum=None):
-    """Read a cursor position report and return ``(rows, cols)``.
+    """Return ``(rows, cols)`` from a cursor position report, skipping stale replies.
 
-    ``minimum`` is the ``(cols, rows)`` size of the tty.  A probe that parks the
-    cursor past the last cell is answered with at least the screen size, so a
-    smaller report is a late answer to an earlier query and is skipped.
-    Raises ``NoCPRReply`` when no acceptable report arrives before ``timeout``.
+    ``minimum`` is the ``(cols, rows)`` tty size; a smaller report is a late answer.
     """
     write_all(fd, b'\x1b[6n')
     buf = ''
@@ -348,7 +341,7 @@ def query(fd, requests, pattern, timeout=_TTYSCAN_QUERY_TIMEOUT):
 
 
 def xtgettcap_query(fd, caps, timeout=_TTYSCAN_QUERY_TIMEOUT):
-    """Return the capabilities for *caps* with the number of replies received."""
+    """Return the capabilities of *caps* and the number of replies received."""
     if not caps:
         return {}, 0
     replies = list(query(fd, [f'\x1bP+q{hex_encode(c)}\x1b\\' for c in caps],
@@ -359,12 +352,7 @@ def xtgettcap_query(fd, caps, timeout=_TTYSCAN_QUERY_TIMEOUT):
 
 
 def check_xtgettcap_replies(init_answered, init_asked, answered, asked):
-    """Warn when a terminal that answered every opening query lost replies.
-
-    A terminal that answers unknown capabilities with a refusal answers every
-    query, so a short batch means the reply was cut.  A terminal that answers
-    only selected capabilities is short by nature and says nothing.
-    """
+    """Warn when a terminal that answered every opening query loses replies."""
     if init_answered == init_asked and answered < asked:
         warn(f"XTGETTCAP: {answered} of {asked} queries answered, "
              f"the batch may be truncated")
@@ -390,13 +378,7 @@ def decrqm_query(fd, mode, timeout=_TTYSCAN_QUERY_TIMEOUT):
 
 
 def decqss_query(fd, setting_id, timeout=_TTYSCAN_QUERY_TIMEOUT):
-    """Query terminal state via DECRQSS.
-
-    Sends ``DCS $ q <setting_id> ST`` with a CPR boundary fence.  Returns the
-    decoded parameter string on success, with the echoed setting identifier
-    stripped.  Returns ``None`` when the terminal does not support DECRQSS or
-    the setting is invalid.
-    """
+    """Return the DECRQSS setting value for ``setting_id``, or ``None`` if unsupported."""
     for m in query(fd, [f'\x1bP$q{setting_id}\x1b\\'], _RE_DECRQSS_RESPONSE, timeout):
         if m.group(1) == '1':
             text = m.group(2)
@@ -416,8 +398,7 @@ def probe_truecolor(fd, timeout):
     if probed is None:
         verbose("DECRQSS probe query failed")
         return False
-    # Terminals may normalize the response, e.g. "48:2::1:2:3" or
-    # "48;2;1;2;3", so match the RGB triple with either delimiter.
+    # Terminals normalize the SGR report: "48:2::1:2:3" or "48;2;1;2;3".
     accepted = bool(re.search(r'48[:;]2[:;]*1[:;]2[:;]3', probed))
     if not accepted:
         verbose(f"DECRQSS truecolor probe: color not accepted: {probed!r}")

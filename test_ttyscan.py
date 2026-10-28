@@ -49,11 +49,8 @@ def _split_replies(response):
 
 
 def _pty_run(args, env, response, timeout=5.0):
-    """Run a command in a PTY child with canned terminal response.
+    """Run a command in a PTY child, writing each canned segment at its fence.
 
-    Each segment of ``response``, delimited by a cursor position report, is
-    written when the child writes the matching fence, as a terminal answers
-    queries in order.  A child that outruns the canned replies waits for them.
     Returns ``(output_text, wait_status)``.
     """
     return _pty_run_staggered(
@@ -62,11 +59,9 @@ def _pty_run(args, env, response, timeout=5.0):
 
 
 def _pty_run_staggered(args, env, responses, timeout=5.0):
-    """Run a command in a PTY child, answering fence k with responses[k].
+    """Run a command in a PTY child, answering fence k with ``responses[k]``.
 
-    ``responses`` is a list of ``(delay_sec, data)`` tuples; each chunk is
-    written once the child has asked for it, after its delay.  Returns
-    ``(output_text, wait_status)``.
+    Each entry is ``(delay_sec, data)``.  Returns ``(output_text, wait_status)``.
     """
     import fcntl
     import select
@@ -146,13 +141,11 @@ def test_check_xtgettcap_replies(init_answered, answered, expected):
 
 @pytest.mark.parametrize("name,hexstr", [("TN", "544e"), ("RGB", "524742")])
 def test_hex_encode(name, hexstr):
-    """Encode ASCII string to hex."""
     assert hex_encode(name) == hexstr
 
 
 @pytest.mark.parametrize("hexstr,expected", [("544e", "TN"), ("", ""), ("xyz", "")])
 def test_hex_decode(hexstr, expected):
-    """Decode hex string to ASCII, empty string on invalid."""
     assert hex_decode(hexstr) == expected
 
 
@@ -190,7 +183,6 @@ def test_unescape_terminfo(raw, expected):
     ({"cols": "abc"}, set(), {}, {}),
 ])
 def test_classify_caps(caps, expected_bool, expected_num, expected_str):
-    """Classify XTGETTCAP response into bool/num/str capability dicts."""
     result = classify_caps(caps)
     assert result["bool_caps"] == expected_bool
     assert result["num_caps"] == expected_num
@@ -208,7 +200,7 @@ def test_classify_caps(caps, expected_bool, expected_num, expected_str):
     ({}, {}, set(), False),
 ])
 def test_has_meaningful_caps(str_caps, num_caps, bool_caps, expected):
-    """Check whether capabilities contain meaningful screen-oriented caps."""
+    """Screen capabilities decide; key-only strings and a bare colors count yield nothing."""
     assert has_meaningful_caps(str_caps, num_caps, bool_caps) == expected
 
 
@@ -230,7 +222,7 @@ def test_env_exports(force, pairs, env, expected):
 
 
 def test_env_exports_quote_override():
-    """A quote of str leaves a value unquoted."""
+    """A ``quote`` of ``str`` leaves the value unquoted."""
     with patch.dict(os.environ, {}, clear=True):
         assert env_exports(False, ("TERM", "a b"), quote=str) == ["export TERM=a b"]
 
@@ -261,7 +253,6 @@ def test_size_exports(rows, cols, winsize, force, env, expected):
     ("empty", {}, {}, set(), []),
 ])
 def test_build_terminfo_binary(term, str_caps, num_caps, bool_caps, checks):
-    """Build terminfo binary from capabilities."""
     data = build_terminfo_binary(term, str_caps, num_caps, bool_caps)
     assert len(data) >= 12
     for idx, val in checks:
@@ -290,7 +281,6 @@ def test_sanitize_term_name(name, expected):
     (":", True, "\\:"),
 ])
 def test_escape_value(value, terminfo, expected):
-    """Escape special characters to terminfo/termcap format."""
     assert escape_value(value, terminfo=terminfo) == expected
 
 
@@ -301,7 +291,6 @@ def test_escape_value(value, terminfo, expected):
     ("a$b", "'a$b'"),
 ])
 def test_shell_escape(value, expected):
-    """Shell-escape a value for export statements."""
     assert shell_escape(value) == expected
 
 
@@ -318,7 +307,6 @@ def test_shell_escape(value, expected):
      [":am:", ":Co#8:"]),
 ])
 def test_build_termcap_entry(term, str_caps, num_caps, bool_caps, substrs):
-    """Build termcap entry from capabilities."""
     entry = build_termcap_entry(term, str_caps, num_caps, bool_caps)
     assert f"{term}|XTGETTCAP-discovered terminal:" in entry
     for s in substrs:
@@ -326,7 +314,6 @@ def test_build_termcap_entry(term, str_caps, num_caps, bool_caps, substrs):
 
 
 def test_build_termcap_entry_empty():
-    """Build termcap entry with no capabilities."""
     assert build_termcap_entry("e", {}, {}, set()) == \
         "e|XTGETTCAP-discovered terminal:"
 
@@ -345,7 +332,6 @@ def test_xtversion_query_no_cpr():
     ("\x1bP>|foot\x1b\\", "foot", ""),
 ])
 def test_xtversion_query_parsed(data, expected_name, expected_version):
-    """xtversion_query extracts name/version from DCS response."""
     import re as _re_mod
     from ttyscan import _RE_CPR_BOUNDARY
 
@@ -358,7 +344,7 @@ def test_xtversion_query_parsed(data, expected_name, expected_version):
 
 
 def test_xtversion_query_no_dcs():
-    """xtversion_query returns None when no DCS response found before CPR."""
+    """A fence with no DCS reply in front of it yields ``None``."""
     import re as _re_mod
     from ttyscan import _RE_CPR_BOUNDARY
 
@@ -371,7 +357,6 @@ def test_xtversion_query_no_dcs():
 
 
 def test_warn():
-    """warn() writes a prefixed message to stderr."""
     buf = io.StringIO()
     with patch.object(sys, "stderr", buf):
         warn("test message")
@@ -383,7 +368,6 @@ def test_warn():
     (False, ""),
 ])
 def test_verbose(enabled, expected):
-    """verbose() writes only when the module flag is set."""
     buf = io.StringIO()
     with patch.object(sys, "stderr", buf), patch("ttyscan._VERBOSE", enabled):
         verbose("test message")
@@ -394,7 +378,6 @@ def test_verbose(enabled, expected):
 
 
 def test_terminfo_file_path():
-    """terminfo_file_path() builds path from term name and base dir."""
     assert terminfo_file_path("xterm", Path("/tmp/t")) == Path("/tmp/t/x/xterm")
 
 
@@ -403,7 +386,6 @@ def test_terminfo_file_path():
     ({"XDG_CONFIG_HOME": "/custom/config"}, "/custom/config"),
 ])
 def test_ttyscan_terminfo_dir(env, expected_prefix):
-    """ttyscan_terminfo_dir() returns XDG-based path."""
     with patch.dict(os.environ, env, clear=True):
         result = ttyscan_terminfo_dir()
     assert "ttyscan" in str(result)
@@ -424,7 +406,6 @@ def test_ttyscan_terminfo_dir(env, expected_prefix):
      "2"),
 ])
 def test_decqss_query_valid(setting_id, buf, expected):
-    """decqss_query parses valid DECRQSS responses."""
     import re as _re_mod
     from ttyscan import _RE_CPR_BOUNDARY
 
@@ -438,7 +419,7 @@ def test_decqss_query_valid(setting_id, buf, expected):
     "\x1b[31;128R",
 ])
 def test_decqss_query_invalid(buf):
-    """decqss_query returns None for Ps=0 or missing response."""
+    """A refusal or a bare fence yields ``None``."""
     import re as _re_mod
     from ttyscan import _RE_CPR_BOUNDARY
 
@@ -455,7 +436,6 @@ def test_decqss_query_invalid(buf):
     (None, None, False, "DECRQSS not supported by this terminal"),
 ])
 def test_probe_truecolor(original, probed, expected, verbose_msg):
-    """probe_truecolor detects truecolor via DECRQSS SGR set/query."""
     decrqss_responses = [original, probed]
     with patch('ttyscan.decqss_query', side_effect=decrqss_responses), \
             patch('ttyscan.write_all'), \
@@ -466,7 +446,6 @@ def test_probe_truecolor(original, probed, expected, verbose_msg):
 
 
 def test_main_help():
-    """ttyscan --help prints usage and exits 0."""
     result = subprocess.run(
         [sys.executable, "-m", "ttyscan", "--help"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
@@ -534,7 +513,6 @@ def test_ttyscan_query_timeout_bad_value():
     ("xterm", "True"),
 ])
 def test_has_terminfo(term, expected):
-    """has_terminfo() returns True/False based on terminfo availability."""
     result = subprocess.run(
         [sys.executable, "-c",
          f"from ttyscan import has_terminfo; "
@@ -547,7 +525,6 @@ def test_has_terminfo(term, expected):
 @pytest.mark.skipif(sys.platform == "win32", reason="start_new_session requires unix")
 @pytest.mark.parametrize("verbose_arg", ["", "True"])
 def test_generate_exports_no_tty(verbose_arg):
-    """generate_exports() returns [] when /dev/tty unavailable."""
     verbose = f"verbose_enabled={verbose_arg}" if verbose_arg else ""
     code = f"import ttyscan; print(ttyscan.generate_exports({verbose}))"
     result = subprocess.run(
@@ -560,27 +537,23 @@ def test_generate_exports_no_tty(verbose_arg):
 
 
 def test_get_winsize_non_tty():
-    """get_winsize() returns defaults for non-TTY fd."""
     from ttyscan import get_winsize
     with open("/dev/null") as f:
         assert get_winsize(f.fileno()) == (80, 24)
 
 
 def test_set_cbreak_none():
-    """set_cbreak() returns None when fd is None."""
     from ttyscan import set_cbreak
     assert set_cbreak(None) is None
 
 
 def test_restore_termios_none():
-    """restore_termios() is a no-op when fd or saved is None."""
     from ttyscan import restore_termios
     restore_termios(None, None)
     restore_termios(3, None)
 
 
 def test_write_all_none_fd():
-    """write_all() is a no-op when fd is None."""
     from ttyscan import write_all
     write_all(None, b"data")
 
@@ -767,7 +740,6 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
      ["export TERMCAP="]),
 ])
 def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path):
-    """PTY integration: run ttyscan with canned XTGETTCAP, verify exports."""
     terminfo_dir = tmp_path / "ttyscan" / "terminfo"
     project_coverage = os.path.join(os.path.dirname(__file__), ".coverage")
 
@@ -804,7 +776,7 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 def test_size_probe_waits_for_late_cpr(tmp_path):
-    """A cursor report later than the old 0.25s window still yields the size."""
+    """A cursor report arriving 0.6s after its fence still yields the size."""
     env = {
         **dict(os.environ),
         "XDG_CONFIG_HOME": str(tmp_path),
@@ -856,82 +828,88 @@ def test_main_exits_without_cpr(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 @pytest.mark.parametrize("flags,responses,env_extra,expected,not_expected", [
-    # DECRQSS detects truecolor when neither COLORTERM nor XTGETTCAP RGB indicate it
-    ("-v",
-     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
-      (0.1, _DECRPM_none + _CPR_5_10),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_999_999)],
-     {"TERM_PROGRAM": "xterm"},
-     ["export COLORTERM=truecolor", "export TERM=xterm"],
-     ["export LINES=", "export COLUMNS=", "export TERMINFO=", "export TERMCAP="]),
-    # DECRQSS probe skipped when COLORTERM already truecolor
-    ("-v",
-     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-      (0.1, _DECRPM_none + _CPR_5_10),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_999_999)],
-     {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
-     ["export TERM=xterm"],
-     ["export COLORTERM=truecolor"]),
-    # DECRQSS probe skipped when XTGETTCAP RGB=8/8/8
-    ("-v",
-     [(0.0, _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128),
-      (0.1, _DECRPM_none + _CPR_31_128),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_999_999)],
-     {"TERM_PROGRAM": "xterm"},
-     ["export COLORTERM=truecolor", "export TERM=xterm"],
-     ["export TERMINFO=", "export TERMCAP="]),
-    # -f forces DECRQSS probe even when COLORTERM already truecolor
-    ("-vf",
-     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-      (0.1, _XTVERSION_XTERM + _CPR_5_10),
-      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_6_7),
-      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_5_10),
-      (0.1, _DECRPM_none + _CPR_6_7),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_31_128)],
-     {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
-     ["export COLORTERM=truecolor", "export TERM=xterm"],
-     []),
-    # DECRQSS unsupported: no probe response, no COLORTERM export
-    ("-v",
-     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-      (0.1, _DECRPM_none + _CPR_5_10),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_999_999)],
-     {"TERM_PROGRAM": "xterm"},
-     ["export TERM=xterm"],
-     ["export COLORTERM=truecolor"]),
-    # DECRQSS returns palette index (non-truecolor): no COLORTERM export
-    ("-v",
-     [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-      (0.1, _DECRQSS_SGR_PALETTE + _CPR_6_7),
-      (0.1, _DECRPM_none + _CPR_5_10),
-      (0.1, _CPR_999_999),
-      (0.1, _CPR_999_999)],
-     {"TERM_PROGRAM": "xterm"},
-     ["export TERM=xterm"],
-     ["export COLORTERM=truecolor"]),
-    # DECRQSS probe with XTGETTCAP not supported (empty init): COLORTERM only
-    ("-v",
-     [(0.0, _CPR_31_128),
-      (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-      (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
-      (0.1, _DECRPM_none + _CPR_5_10),
-      (0.1, _CPR_999_999)],
-     {"TERM_PROGRAM": "xterm"},
-     ["export COLORTERM=truecolor"],
-     ["export TERM=", "export TERMINFO=", "export LINES=", "export COLUMNS="]),
+    pytest.param(
+        "-v",
+        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
+         (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
+         (0.1, _DECRPM_none + _CPR_5_10),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_999_999)],
+        {"TERM_PROGRAM": "xterm"},
+        ["export COLORTERM=truecolor", "export TERM=xterm"],
+        ["export LINES=", "export COLUMNS=", "export TERMINFO=", "export TERMCAP="],
+        id="probe-detects-truecolor"),
+    pytest.param(
+        "-v",
+        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+         (0.1, _DECRPM_none + _CPR_5_10),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_999_999)],
+        {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
+        ["export TERM=xterm"],
+        ["export COLORTERM=truecolor"],
+        id="colorterm-already-set"),
+    pytest.param(
+        "-v",
+        [(0.0, _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128),
+         (0.1, _DECRPM_none + _CPR_31_128),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_999_999)],
+        {"TERM_PROGRAM": "xterm"},
+        ["export COLORTERM=truecolor", "export TERM=xterm"],
+        ["export TERMINFO=", "export TERMCAP="],
+        id="rgb-capability"),
+    pytest.param(
+        "-vf",
+        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+         (0.1, _XTVERSION_XTERM + _CPR_5_10),
+         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_6_7),
+         (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_5_10),
+         (0.1, _DECRPM_none + _CPR_6_7),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_31_128)],
+        {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
+        ["export COLORTERM=truecolor", "export TERM=xterm"],
+        [],
+        id="force-probes-anyway"),
+    pytest.param(
+        "-v",
+        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+         (0.1, _DECRPM_none + _CPR_5_10),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_999_999)],
+        {"TERM_PROGRAM": "xterm"},
+        ["export TERM=xterm"],
+        ["export COLORTERM=truecolor"],
+        id="decrqss-unsupported"),
+    pytest.param(
+        "-v",
+        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
+         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
+         (0.1, _DECRQSS_SGR_PALETTE + _CPR_6_7),
+         (0.1, _DECRPM_none + _CPR_5_10),
+         (0.1, _CPR_999_999),
+         (0.1, _CPR_999_999)],
+        {"TERM_PROGRAM": "xterm"},
+        ["export TERM=xterm"],
+        ["export COLORTERM=truecolor"],
+        id="palette-index"),
+    pytest.param(
+        "-v",
+        [(0.0, _CPR_31_128),
+         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
+         (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
+         (0.1, _DECRPM_none + _CPR_5_10),
+         (0.1, _CPR_999_999)],
+        {"TERM_PROGRAM": "xterm"},
+        ["export COLORTERM=truecolor"],
+        ["export TERM=", "export TERMINFO=", "export LINES=", "export COLUMNS="],
+        id="no-xtgettcap"),
 ])
 def test_decrqss_probe_pty(flags, responses, env_extra, expected,
                            not_expected, tmp_path):
-    """PTY integration: DECRQSS truecolor probe scenarios."""
     env = {
         **dict(os.environ),
         "XDG_CONFIG_HOME": str(tmp_path),
