@@ -12,34 +12,27 @@ import pytest
 from ttyscan import (
     build_termcap_entry,
     build_terminfo_binary,
-    check_colorterm,
-    check_lines_columns,
-    check_term,
-    check_term_program,
     classify_caps,
     decqss_query,
+    env_exports,
     escape_value,
     has_meaningful_caps,
     hex_decode,
     hex_encode,
-    normalize_terminal_name,
-    pack_short_le,
     probe_truecolor,
     read_cpr,
     read_until,
     sanitize_term_name,
     shell_escape,
+    size_exports,
     terminfo_file_path,
-    terminfo_installed_at,
     ttyscan_terminfo_dir,
     unescape_terminfo,
     verbose,
     warn,
     NoCPRReply,
-    _parse_xtversion_text,
     xtversion_query,
 )
-from ttyscan import write_terminfo as _write_terminfo
 
 
 def _split_replies(response):
@@ -127,7 +120,7 @@ def test_xtgettcap_query_counts_replies():
 
     with patch('ttyscan.read_until', return_value=(fence, first)), \
             patch('ttyscan.write_all'):
-        caps, answered = xtgettcap_query(3, 4, ['TN', 'colors'], 10.0)
+        caps, answered = xtgettcap_query(3, ['TN', 'colors'], 10.0)
 
     assert caps == {'TN': 'xterm'}
     assert answered == 2
@@ -219,44 +212,34 @@ def test_has_meaningful_caps(str_caps, num_caps, bool_caps, expected):
     assert has_meaningful_caps(str_caps, num_caps, bool_caps) == expected
 
 
-@pytest.mark.parametrize("rgb,force,env_colorterm,expected", [
-    ("8/8/8", False, None, "export COLORTERM=truecolor"),
-    ("8/8/8", False, "truecolor", None),
-    ("8/8/8", True, "truecolor", "export COLORTERM=truecolor"),
-    ("6/6/6", False, None, None),
-    ("", False, None, None),
-    ("bad", False, None, None),
-    (None, False, None, None),
+@pytest.mark.parametrize("force,pairs,env,expected", [
+    (False, (("TERM", "xterm"),), {}, ["export TERM='xterm'"]),
+    (False, (("TERM", "xterm"),), {"TERM": "xterm"}, []),
+    (True, (("TERM", "xterm"),), {"TERM": "xterm"}, ["export TERM='xterm'"]),
+    (False, (("TERM_PROGRAM", "X.Org"), ("TERM_PROGRAM_VERSION", "7.7.0(370)")), {},
+     ["export TERM_PROGRAM='X.Org'", "export TERM_PROGRAM_VERSION='7.7.0(370)'"]),
+    (False, (("TERM_PROGRAM", "kitty"), ("TERM_PROGRAM_VERSION", "0.24.2")),
+     {"TERM_PROGRAM": "kitty", "TERM_PROGRAM_VERSION": "0.24.2"}, []),
+    (False, (("TERM_PROGRAM", "foot"), ("TERM_PROGRAM_VERSION", "")), {},
+     ["export TERM_PROGRAM='foot'"]),
 ])
-def test_check_colorterm(rgb, force, env_colorterm, expected):
-    """Check COLORTERM export based on RGB capability."""
-    env = {}
-    if env_colorterm is not None:
-        env["COLORTERM"] = env_colorterm
-    caps = {"RGB": rgb} if rgb is not None else {}
+def test_env_exports(force, pairs, env, expected):
+    """env_exports emits only values that differ from the environment."""
     with patch.dict(os.environ, env, clear=True):
-        assert check_colorterm(caps, force) == expected
+        assert env_exports(force, *pairs) == expected
 
 
-@pytest.mark.parametrize("tn,force,env_term,expected", [
-    ("kitty", False, "xterm", "export TERM=kitty"),
-    ("xterm", False, "xterm", None),
-    ("xterm", True, "xterm", "export TERM=xterm"),
-    ("", False, "xterm", None),
-    (None, False, "xterm", None),
-])
-def test_check_term(tn, force, env_term, expected):
-    """Check TERM export based on TN capability vs environment."""
-    caps = {"TN": tn} if tn is not None else {}
-    with patch.dict(os.environ, {"TERM": env_term}, clear=True):
-        assert check_term(caps, force) == expected
+def test_env_exports_quote_override():
+    """A quote of str leaves a value unquoted."""
+    with patch.dict(os.environ, {}, clear=True):
+        assert env_exports(False, ("TERM", "a b"), quote=str) == ["export TERM=a b"]
 
 
 @pytest.mark.parametrize("rows,cols,winsize,force,env,expected", [
     (30, 100, (80, 24), False, {},
      ["export LINES=30", "export COLUMNS=100"]),
-    (30, 100, (100, 30), False, {}, None),
-    (30, 100, (80, 24), False, {"LINES": "30", "COLUMNS": "100"}, None),
+    (30, 100, (100, 30), False, {}, []),
+    (30, 100, (80, 24), False, {"LINES": "30", "COLUMNS": "100"}, []),
     (30, 100, (100, 30), False, {"LINES": "24", "COLUMNS": "80"},
      ["export LINES=30", "export COLUMNS=100"]),
     (30, 100, (100, 30), True, {"LINES": "30", "COLUMNS": "100"},
@@ -264,23 +247,10 @@ def test_check_term(tn, force, env_term, expected):
     (30, 100, (100, 30), False, {"LINES": "30", "COLUMNS": "99"},
      ["export COLUMNS=100"]),
 ])
-def test_check_lines_columns(rows, cols, winsize, force, env, expected):
-    """LINES/COLUMNS export when detected size differs from terminal/environment."""
+def test_size_exports(rows, cols, winsize, force, env, expected):
+    """LINES/COLUMNS export when the size is new or corrects the environment."""
     with patch.dict(os.environ, env, clear=True):
-        assert check_lines_columns(rows, cols, winsize, force) == expected
-
-
-@pytest.mark.parametrize("value,expected", [
-    (42, (42, 0)),
-    (-1, (0xFF, 0xFF)),
-    (256, (0, 1)),
-])
-def test_pack_short_le(value, expected):
-    """Pack short integer into bytearray at offset."""
-    buf = bytearray(2)
-    pack_short_le(buf, 0, value)
-    assert buf[0] == expected[0]
-    assert buf[1] == expected[1]
+        assert size_exports(rows, cols, winsize, force) == expected
 
 
 @pytest.mark.parametrize("term,str_caps,num_caps,bool_caps,checks", [
@@ -361,57 +331,17 @@ def test_build_termcap_entry_empty():
         "e|XTGETTCAP-discovered terminal:"
 
 
-@pytest.mark.parametrize("name,expected", [
-    ("WezTerm", "wezterm"),
-    ("xterm-kitty", "xterm-kitty"),
-])
-def test_normalize_terminal_name(name, expected):
-    """Normalize TN capability value to lowercase."""
-    assert normalize_terminal_name(name) == expected
-
-
-@pytest.mark.parametrize("text,expected", [
-    ("kitty(0.24.2)", ("kitty", "0.24.2")),
-    ("XTerm(367)", ("XTerm", "367")),
-    ("tmux 3.2a", ("tmux", "3.2a")),
-    ("X.Org 7.7.0(370)", ("X.Org", "7.7.0(370)")),
-    ("foot", ("foot", "")),
-    ("", ("", "")),
-])
-def test_parse_xtversion_text(text, expected):
-    """Parse XTVERSION response text into name and version."""
-    assert _parse_xtversion_text(text) == expected
-
-
-@pytest.mark.parametrize("name,version,force,env,expected", [
-    ("kitty", "0.24.2", False, {},
-     ["export TERM_PROGRAM='kitty'", "export TERM_PROGRAM_VERSION='0.24.2'"]),
-    ("kitty", "0.24.2", False,
-     {"TERM_PROGRAM": "kitty", "TERM_PROGRAM_VERSION": "0.24.2"}, None),
-    ("kitty", "0.24.2", True,
-     {"TERM_PROGRAM": "kitty", "TERM_PROGRAM_VERSION": "0.24.2"},
-     ["export TERM_PROGRAM='kitty'", "export TERM_PROGRAM_VERSION='0.24.2'"]),
-    ("xterm", "", False, {},
-     ["export TERM_PROGRAM='xterm'"]),
-    ("X.Org", "7.7.0(370)", False, {},
-     ["export TERM_PROGRAM='X.Org'", "export TERM_PROGRAM_VERSION='7.7.0(370)'"]),
-])
-def test_check_term_program(name, version, force, env, expected):
-    """Check TERM_PROGRAM/TERM_PROGRAM_VERSION export logic."""
-    with patch.dict(os.environ, env, clear=True):
-        assert check_term_program(name, version, force) == expected
-
-
 def test_xtversion_query_no_cpr():
     """xtversion_query propagates the missing cursor position report."""
     with patch('ttyscan.read_until', side_effect=NoCPRReply("no cursor position report")):
         with pytest.raises(NoCPRReply):
-            xtversion_query(3, 4, 0.25)
+            xtversion_query(3, 0.25)
 
 
 @pytest.mark.parametrize("data,expected_name,expected_version", [
     ("\x1bP>|kitty(0.24.2)\x1b\\", "kitty", "0.24.2"),
     ("\x1bP>|tmux 3.2a\x1b\\", "tmux", "3.2a"),
+    ("\x1bP>|X.Org 7.7.0(370)\x1b\\", "X.Org", "7.7.0(370)"),
     ("\x1bP>|foot\x1b\\", "foot", ""),
 ])
 def test_xtversion_query_parsed(data, expected_name, expected_version):
@@ -423,7 +353,7 @@ def test_xtversion_query_parsed(data, expected_name, expected_version):
     cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, full_buf)
     read_until_return = (cpr_match, full_buf)
     with patch('ttyscan.read_until', return_value=read_until_return):
-        result = xtversion_query(3, 4, 0.25)
+        result = xtversion_query(3, 0.25)
     assert result == (expected_name, expected_version)
 
 
@@ -436,22 +366,29 @@ def test_xtversion_query_no_dcs():
     cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, full_buf)
     read_until_return = (cpr_match, full_buf)
     with patch('ttyscan.read_until', return_value=read_until_return):
-        result = xtversion_query(3, 4, 0.25)
+        result = xtversion_query(3, 0.25)
     assert result is None
 
 
-@pytest.mark.parametrize("func,args,enabled,expected_in", [
-    (warn, ("test message",), None, "ttyscan: test message"),
-    (verbose, ("test message", True), True, "ttyscan: test message"),
-    (verbose, ("test message", False), False, None),
-])
-def test_output_functions(func, args, enabled, expected_in):
-    """warn() and verbose() write prefixed messages to stderr."""
+def test_warn():
+    """warn() writes a prefixed message to stderr."""
     buf = io.StringIO()
     with patch.object(sys, "stderr", buf):
-        func(*args)
-    if expected_in is not None:
-        assert expected_in in buf.getvalue()
+        warn("test message")
+    assert "ttyscan: test message" in buf.getvalue()
+
+
+@pytest.mark.parametrize("enabled,expected", [
+    (True, "ttyscan: test message"),
+    (False, ""),
+])
+def test_verbose(enabled, expected):
+    """verbose() writes only when the module flag is set."""
+    buf = io.StringIO()
+    with patch.object(sys, "stderr", buf), patch("ttyscan._VERBOSE", enabled):
+        verbose("test message")
+    if expected:
+        assert expected in buf.getvalue()
     else:
         assert buf.getvalue() == ""
 
@@ -459,15 +396,6 @@ def test_output_functions(func, args, enabled, expected_in):
 def test_terminfo_file_path():
     """terminfo_file_path() builds path from term name and base dir."""
     assert terminfo_file_path("xterm", Path("/tmp/t")) == Path("/tmp/t/x/xterm")
-
-
-def test_terminfo_installed_at(tmp_path):
-    """terminfo_installed_at() checks if terminfo file exists."""
-    fpath = terminfo_file_path("xterm", tmp_path)
-    fpath.parent.mkdir(parents=True, exist_ok=True)
-    fpath.write_bytes(b"fake")
-    assert terminfo_installed_at("xterm", tmp_path) is True
-    assert terminfo_installed_at("nonexist", tmp_path) is False
 
 
 @pytest.mark.parametrize("env,expected_prefix", [
@@ -482,19 +410,6 @@ def test_ttyscan_terminfo_dir(env, expected_prefix):
     assert "terminfo" in str(result)
     if expected_prefix is not None:
         assert str(result).startswith(expected_prefix)
-
-
-@pytest.mark.parametrize("term,str_caps,num_caps,bool_caps", [
-    ("xterm", {"clear": "\x1b[H"}, {"colors": 256}, {"am"}),
-    ("../../bad", {"clear": "\x1b[H"}, {}, set()),
-])
-def test_write_terminfo(tmp_path, term, str_caps, num_caps, bool_caps):
-    """write_terminfo() creates and sanitizes terminfo file on disk."""
-    assert _write_terminfo(term, str_caps, num_caps, bool_caps, tmp_path) is True
-    safe = sanitize_term_name(term)
-    fpath = terminfo_file_path(safe, tmp_path)
-    assert fpath.exists()
-    assert fpath.stat().st_size > 0
 
 
 @pytest.mark.parametrize("setting_id,buf,expected", [
@@ -515,7 +430,7 @@ def test_decqss_query_valid(setting_id, buf, expected):
 
     cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, buf)
     with patch('ttyscan.read_until', return_value=(cpr_match, buf)):
-        assert decqss_query(3, 4, setting_id, 0.25) == expected
+        assert decqss_query(3, setting_id, 0.25) == expected
 
 
 @pytest.mark.parametrize("buf", [
@@ -529,13 +444,14 @@ def test_decqss_query_invalid(buf):
 
     cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, buf)
     with patch('ttyscan.read_until', return_value=(cpr_match, buf)):
-        assert decqss_query(3, 4, 'm', 0.25) is None
+        assert decqss_query(3, 'm', 0.25) is None
 
 
 @pytest.mark.parametrize("original,probed,expected,verbose_msg", [
     ("0", "48:2:1:2:3", True, None),
     ("0", "0", False, None),
     ("0", "40", False, None),
+    ("0", None, False, "DECRQSS probe query failed"),
     (None, None, False, "DECRQSS not supported by this terminal"),
 ])
 def test_probe_truecolor(original, probed, expected, verbose_msg):
@@ -544,17 +460,9 @@ def test_probe_truecolor(original, probed, expected, verbose_msg):
     with patch('ttyscan.decqss_query', side_effect=decrqss_responses), \
             patch('ttyscan.write_all'), \
             patch('ttyscan.verbose') as mock_verbose:
-        assert probe_truecolor(3, 4, 0.25, True) == expected
+        assert probe_truecolor(3, 0.25) == expected
         if verbose_msg:
-            mock_verbose.assert_called_with(verbose_msg, True)
-
-
-def test_probe_truecolor_fails_on_second_query():
-    """probe_truecolor returns False when probe query fails."""
-    with patch('ttyscan.decqss_query', side_effect=["0", None]), \
-            patch('ttyscan.write_all'), \
-            patch('ttyscan.verbose'):
-        assert probe_truecolor(3, 4, 0.25, False) is False
+            mock_verbose.assert_called_with(verbose_msg)
 
 
 def test_main_help():
@@ -697,19 +605,19 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
             patch('ttyscan.read_cpr', return_value=cpr) as mock_read_cpr, \
             patch('ttyscan.write_all') as mock_write_all, \
             patch('ttyscan.verbose'):
-        result = detect_size(3, 4, (128, 31), False)
+        result = detect_size(3, (128, 31))
 
     assert result == expected
     if expected == (31, 128, 'inband'):
         mock_read_until.assert_called_once_with(
-            3, 4, ['\x1b[?2048h'], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT)
+            3, ['\x1b[?2048h'], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT)
         mock_read_cpr.assert_not_called()
-        mock_write_all.assert_any_call(4, '\x1b[?2048l')
+        mock_write_all.assert_any_call(3, '\x1b[?2048l')
     else:
-        mock_read_cpr.assert_called_once_with(3, 4, _TTYSCAN_QUERY_TIMEOUT,
-                                              minimum=(128, 31))
-        mock_write_all.assert_any_call(4, '\x1b7\x1b[1000;1000H')
-        mock_write_all.assert_any_call(4, '\x1b8')
+        mock_read_cpr.assert_called_once_with(
+            3, _TTYSCAN_QUERY_TIMEOUT, minimum=(128, 31))
+        mock_write_all.assert_any_call(3, '\x1b7\x1b[1000;1000H')
+        mock_write_all.assert_any_call(3, '\x1b8')
         if decrpm != 2:
             mock_read_until.assert_not_called()
 
@@ -723,8 +631,8 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
 def test_read_cpr(chunks, minimum, expected):
     with patch('ttyscan.read_available', side_effect=chunks), \
             patch('ttyscan.write_all') as mock_write_all:
-        assert read_cpr(3, 4, 0.25, minimum=minimum) == expected
-    mock_write_all.assert_called_once_with(4, b'\x1b[6n')
+        assert read_cpr(3, 0.25, minimum=minimum) == expected
+    mock_write_all.assert_called_once_with(3, b'\x1b[6n')
 
 
 @pytest.mark.parametrize("chunks,minimum", [
@@ -735,21 +643,21 @@ def test_read_cpr(chunks, minimum, expected):
 def test_read_cpr_no_acceptable_reply(chunks, minimum):
     with patch('ttyscan.read_available', side_effect=chunks):
         with pytest.raises(NoCPRReply):
-            read_cpr(3, 4, 0.25, minimum=minimum)
+            read_cpr(3, 0.25, minimum=minimum)
 
 
 def test_read_until_no_reply():
     with patch('ttyscan.read_available', return_value=b""), \
             patch('ttyscan.write_all'):
         with pytest.raises(NoCPRReply):
-            read_until(3, 4, [], r'\x1b\[\d+;\d+R', 0.25)
+            read_until(3, [], r'\x1b\[\d+;\d+R', 0.25)
 
 
 def test_read_until_no_fence_in_flood():
     with patch('ttyscan.read_available', return_value=b"x" * 4096), \
             patch('ttyscan.write_all'):
         with pytest.raises(NoCPRReply):
-            read_until(3, 4, [], r'\x1b\[\d+;\d+R', 10.0)
+            read_until(3, [], r'\x1b\[\d+;\d+R', 10.0)
 
 
 # Canned XTGETTCAP responses for PTY tests.

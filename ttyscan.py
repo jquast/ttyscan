@@ -19,9 +19,36 @@ except ImportError as exc:
 
 __version__ = "0.0.9"
 
+_VERBOSE = False
+
 
 def warn(msg):
     print(f"ttyscan: {msg}", file=sys.stderr)
+
+
+def verbose(msg):
+    if _VERBOSE:
+        print(f"ttyscan: {msg}", file=sys.stderr)
+
+
+def shell_escape(value):
+    if not value:
+        return "''"
+    escaped = value.replace("'", "'\\''")
+    return f"'{escaped}'"
+
+
+def env_exports(force, *pairs, quote=shell_escape):
+    return [f"export {name}={quote(str(value))}" for name, value in pairs
+            if force or os.environ.get(name, "") != str(value)]
+
+
+def size_exports(rows, cols, winsize, force):
+    pairs = (("LINES", rows), ("COLUMNS", cols))
+    if not force and (rows, cols) == (winsize[1], winsize[0]) and all(
+            os.environ.get(name) in (None, str(value)) for name, value in pairs):
+        return []
+    return env_exports(force, *pairs, quote=str)
 
 
 try:
@@ -32,78 +59,45 @@ except ValueError:
          f"is not a valid float, using default 10.0")
     _TTYSCAN_QUERY_TIMEOUT = 10.0
 
-_CANONICAL_BOOL_CAPS = [
-    "AX",
-    "bw", "am", "xsb", "xhp", "xenl", "eo", "gn", "hc", "km", "hs",
-    "in", "da", "db", "mir", "msgr", "os", "eslok", "xt", "hz", "ul",
-    "xon", "nxon", "mc5i", "chts", "nrrmc", "npc", "ndscr", "ccc", "bce",
-    "hls", "xhpa", "crxm", "daisy", "xvpa", "sam", "cpix", "lpix",
-    "OTbs", "OTns", "OTnc", "OTMT", "OTNL", "OTpt", "OTxr",
-]
+_CANONICAL_BOOL_CAPS = (
+    "AX bw am xsb xhp xenl eo gn hc km hs in da db mir msgr os eslok xt hz ul xon "
+    "nxon mc5i chts nrrmc npc ndscr ccc bce hls xhpa crxm daisy xvpa sam cpix "
+    "lpix OTbs OTns OTnc OTMT OTNL OTpt OTxr").split()
 
-_CANONICAL_NUM_CAPS = [
-    "cols", "it", "lines", "lm", "xmc", "pb", "vt", "wsl", "nlab",
-    "lh", "lw", "ma", "wnum", "colors", "pairs", "ncv", "bufsz",
-    "spinv", "spinh", "maddr", "mjump", "mcs", "mls", "npins",
-    "U8",
-    "orc", "orl", "orhi", "orvi", "cps", "widcs", "btns",
-    "bitwin", "bitype", "OTug", "OTdC", "OTdN", "OTdB", "OTdT", "OTkn",
-]
+_CANONICAL_NUM_CAPS = (
+    "cols it lines lm xmc pb vt wsl nlab lh lw ma wnum colors pairs ncv bufsz "
+    "spinv spinh maddr mjump mcs mls npins U8 orc orl orhi orvi cps widcs btns "
+    "bitwin bitype OTug OTdC OTdN OTdB OTdT OTkn").split()
 
-_CANONICAL_STR_CAPS = [
-    "cbt", "bel", "cr", "csr", "tbc", "clear", "el", "ed", "hpa",
-    "cmdch", "cup", "cud1", "home", "civis", "cub1", "mrcup", "cnorm",
-    "cuf1", "ll", "cuu1", "cvvis", "dch1", "dl1", "dsl", "hd", "smacs",
-    "blink", "bold", "smcup", "smdc", "dim", "smir", "invis", "prot",
-    "rev", "smso", "smul", "ech", "rmacs", "sgr0", "rmcup", "rmdc",
-    "rmir", "rmso", "rmul", "flash", "ff", "fsl", "is1", "is2", "is3",
-    "if", "ich1", "il1", "ip", "kbs", "ktbc", "kclr", "kctab", "kdch1",
-    "kdl1", "kcud1", "krmir", "kel", "ked", "kf0", "kf1", "kf10", "kf2",
-    "kf3", "kf4", "kf5", "kf6", "kf7", "kf8", "kf9", "khome", "kich1",
-    "kil1", "kcub1", "kll", "knp", "kpp", "kcuf1", "kind", "kri", "khts",
-    "kcuu1", "rmkx", "smkx", "lf0", "lf1", "lf10", "lf2", "lf3", "lf4",
-    "lf5", "lf6", "lf7", "lf8", "lf9", "rmm", "smm", "nel", "pad", "dch",
-    "dl", "cud", "ich", "indn", "il", "cub", "cuf", "rin", "cuu", "pfkey",
-    "pfloc", "pfx", "mc0", "mc4", "mc5", "rep", "rs1", "rs2", "rs3", "rf",
-    "rc", "vpa", "sc", "ind", "ri", "sgr", "hts", "wind", "ht", "tsl",
-    "uc", "hu", "iprog", "ka1", "ka3", "kb2", "kc1", "kc3", "mc5p", "rmp",
-    "acsc", "pln", "kcbt", "smxon", "rmxon", "smam", "rmam", "xonc",
-    "xoffc", "enacs", "smln", "rmln", "kbeg", "kcan", "kclo", "kcmd",
-    "kcpy", "kcrt", "kend", "kent", "kext", "kfnd", "khlp", "kmrk",
-    "kmsg", "kmov", "knxt", "kopn", "kopt", "kprv", "kprt", "krdo",
-    "kref", "krfr", "krpl", "krst", "kres", "ksav", "kspd", "kund",
-    "kBEG", "kCAN", "kCMD", "kCPY", "kCRT", "kDC", "kDL", "kslt", "kEND",
-    "kEOL", "kEXT", "kFND", "kHLP", "kHOM", "kIC", "kLFT", "kMSG", "kMOV",
-    "kNXT", "kOPT", "kPRV", "kPRT", "kRDO", "kRPL", "kRIT", "kRES",
-    "kSAV", "kSPD", "kUND", "rfi", "kf11", "kf12", "kf13", "kf14", "kf15",
-    "kf16", "kf17", "kf18", "kf19", "kf20", "kf21", "kf22", "kf23",
-    "kf24", "kf25", "kf26", "kf27", "kf28", "kf29", "kf30", "kf31",
-    "kf32", "kf33", "kf34", "kf35", "kf36", "kf37", "kf38", "kf39",
-    "kf40", "kf41", "kf42", "kf43", "kf44", "kf45", "kf46", "kf47",
-    "kf48", "kf49", "kf50", "kf51", "kf52", "kf53", "kf54", "kf55",
-    "kf56", "kf57", "kf58", "kf59", "kf60", "kf61", "kf62", "kf63",
-    "el1", "mgc", "smgl", "smgr", "fln", "sclk", "dclk", "rmclk", "cwin",
-    "wingo", "hup", "dial", "qdial", "tone", "pulse", "hook", "pause",
-    "wait", "u0", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9",
-    "op", "oc", "initc", "initp", "scp", "setf", "setb", "cpi", "lpi",
-    "chr", "cvr", "defc", "swidm", "sdrfq", "sitm", "slm", "smicm",
-    "snlq", "snrmq", "sshm", "ssubm", "ssupm", "sum", "rwidm", "ritm",
-    "rlm", "rmicm", "rshm", "rsubm", "rsupm", "rum", "mhpa", "mcud1",
-    "mcub1", "mcuf1", "mvpa", "mcuu1", "porder", "mcud", "mcub", "mcuf",
-    "mcuu", "scs", "smgb", "smgbp", "smglp", "smgrp", "smgt", "smgtp",
-    "sbim", "scsd", "rbim", "rcsd", "subcs", "supcs", "docr", "zerom",
-    "csnm", "kmous", "minfo", "reqmp", "getm", "setaf", "setab", "pfxl",
-    "devt", "csin", "s0ds", "s1ds", "s2ds", "s3ds", "smglr", "smgtb",
-    "birep", "binel", "bicr", "colornm", "defbi", "endbi", "setcolor",
-    "slines", "dispc", "smpch", "rmpch", "smsc", "rmsc", "pctrm", "scesc",
-    "scesa", "ehhlm", "elhlm", "elohlm", "erhlm", "ethlm", "evhlm",
-    "sgr1", "slength", "OTi2", "OTrs", "OTnl", "OTbc", "OTko", "OTma",
-    "OTG2", "OTG3", "OTG1", "OTG4", "OTGR", "OTGL", "OTGU", "OTGD",
-    "OTGH", "OTGV", "OTGC", "meml", "memu", "box1",
-    # user-defined (extended) capabilities
-    "BD", "BE", "Cr", "Cs", "E3", "Ms", "PE", "PS", "Rmol", "RV",
-    "S0", "Se", "Setulc", "Smol", "Smulx", "Ss", "TS", "XM", "XR",
-]
+_CANONICAL_STR_CAPS = (
+    "cbt bel cr csr tbc clear el ed hpa cmdch cup cud1 home civis cub1 mrcup "
+    "cnorm cuf1 ll cuu1 cvvis dch1 dl1 dsl hd smacs blink bold smcup smdc dim "
+    "smir invis prot rev smso smul ech rmacs sgr0 rmcup rmdc rmir rmso rmul flash "
+    "ff fsl is1 is2 is3 if ich1 il1 ip kbs ktbc kclr kctab kdch1 kdl1 kcud1 krmir "
+    "kel ked kf0 kf1 kf10 kf2 kf3 kf4 kf5 kf6 kf7 kf8 kf9 khome kich1 kil1 kcub1 "
+    "kll knp kpp kcuf1 kind kri khts kcuu1 rmkx smkx lf0 lf1 lf10 lf2 lf3 lf4 lf5 "
+    "lf6 lf7 lf8 lf9 rmm smm nel pad dch dl cud ich indn il cub cuf rin cuu pfkey "
+    "pfloc pfx mc0 mc4 mc5 rep rs1 rs2 rs3 rf rc vpa sc ind ri sgr hts wind ht "
+    "tsl uc hu iprog ka1 ka3 kb2 kc1 kc3 mc5p rmp acsc pln kcbt smxon rmxon smam "
+    "rmam xonc xoffc enacs smln rmln kbeg kcan kclo kcmd kcpy kcrt kend kent kext "
+    "kfnd khlp kmrk kmsg kmov knxt kopn kopt kprv kprt krdo kref krfr krpl krst "
+    "kres ksav kspd kund kBEG kCAN kCMD kCPY kCRT kDC kDL kslt kEND kEOL kEXT "
+    "kFND kHLP kHOM kIC kLFT kMSG kMOV kNXT kOPT kPRV kPRT kRDO kRPL kRIT kRES "
+    "kSAV kSPD kUND rfi kf11 kf12 kf13 kf14 kf15 kf16 kf17 kf18 kf19 kf20 kf21 "
+    "kf22 kf23 kf24 kf25 kf26 kf27 kf28 kf29 kf30 kf31 kf32 kf33 kf34 kf35 kf36 "
+    "kf37 kf38 kf39 kf40 kf41 kf42 kf43 kf44 kf45 kf46 kf47 kf48 kf49 kf50 kf51 "
+    "kf52 kf53 kf54 kf55 kf56 kf57 kf58 kf59 kf60 kf61 kf62 kf63 el1 mgc smgl "
+    "smgr fln sclk dclk rmclk cwin wingo hup dial qdial tone pulse hook pause "
+    "wait u0 u1 u2 u3 u4 u5 u6 u7 u8 u9 op oc initc initp scp setf setb cpi lpi "
+    "chr cvr defc swidm sdrfq sitm slm smicm snlq snrmq sshm ssubm ssupm sum "
+    "rwidm ritm rlm rmicm rshm rsubm rsupm rum mhpa mcud1 mcub1 mcuf1 mvpa mcuu1 "
+    "porder mcud mcub mcuf mcuu scs smgb smgbp smglp smgrp smgt smgtp sbim scsd "
+    "rbim rcsd subcs supcs docr zerom csnm kmous minfo reqmp getm setaf setab "
+    "pfxl devt csin s0ds s1ds s2ds s3ds smglr smgtb birep binel bicr colornm "
+    "defbi endbi setcolor slines dispc smpch rmpch smsc rmsc pctrm scesc scesa "
+    "ehhlm elhlm elohlm erhlm ethlm evhlm sgr1 slength OTi2 OTrs OTnl OTbc OTko "
+    "OTma OTG2 OTG3 OTG1 OTG4 OTGR OTGL OTGU OTGD OTGH OTGV OTGC meml memu box1 "
+    "BD BE Cr Cs E3 Ms PE PS Rmol RV S0 Se Setulc Smol Smulx Ss TS XM XR").split()
 
 _INIT_XTGETTCAP_CAPS = frozenset((
     'TN', 'RGB', 'colors', 'blink', 'sitm', 'ritm', 'cvvis', 'Smulx', 'Setulc', 'Ms'
@@ -112,10 +106,6 @@ _INIT_XTGETTCAP_CAPS = frozenset((
 _FULL_XTGETTCAP_CAPS = tuple(
     sorted(set(_CANONICAL_BOOL_CAPS) | set(_CANONICAL_NUM_CAPS) | set(_CANONICAL_STR_CAPS))
 )
-
-_BOOL_SET = frozenset(_CANONICAL_BOOL_CAPS)
-_NUM_SET = frozenset(_CANONICAL_NUM_CAPS)
-_STR_SET = frozenset(_CANONICAL_STR_CAPS)
 
 # VTE-based terminals (GNOME Terminal, et al.) send malformed ``\\x1bP0+r\\x1b\\\\``
 # (empty hex name) for unsupported capabilities, so zero-or-more hex digits.
@@ -131,6 +121,7 @@ _RE_DECRQSS_RESPONSE = re.compile(r'\x1bP([01])\$r([^\x1b]*)\x1b\\')
 _TERMINFO_MAGIC = 0o432
 _TERMINFO_MAGIC2 = 0o1036
 _SENTINEL_ABSENT = -1
+_MAX_INPUT = 131072
 
 _BOOL_INDEX = {name: idx for idx, name in enumerate(_CANONICAL_BOOL_CAPS)}
 _NUM_INDEX = {name: idx for idx, name in enumerate(_CANONICAL_NUM_CAPS)}
@@ -143,60 +134,28 @@ _TERMINFO_ESCAPE = {
     '\\': '\\', '^': '^', ':': ':',
 }
 
-_TERMINFO_TO_TERMCAP_BOOL = {
-    "am": "am", "bce": "ut", "km": "km", "mc5i": "5i",
-    "mir": "mi", "msgr": "ms", "npc": "NP", "xenl": "xn",
-    "hs": "hs", "in": "in", "da": "da", "db": "db",
-    "eo": "eo", "eslok": "es", "gn": "gn", "hc": "hc",
-    "hz": "hz", "lpix": "YB", "ndscr": "ND", "nrrmc": "NR",
-    "os": "os", "sam": "SA", "ul": "ul", "xb": "xb",
-    "xn": "xn", "xt": "xt",
-}
+_TERMINFO_TO_TERMCAP_BOOL = dict(p.split(':') for p in (
+    "am:am bce:ut km:km mc5i:5i mir:mi msgr:ms npc:NP xenl:xn hs:hs in:in da:da "
+    "db:db eo:eo eslok:es gn:gn hc:hc hz:hz lpix:YB ndscr:ND nrrmc:NR os:os "
+    "sam:SA ul:ul xb:xb xn:xn xt:xt").split())
 
-_TERMINFO_TO_TERMCAP_NUM = {
-    "colors": "Co", "cols": "co", "lines": "li", "it": "it",
-    "pairs": "pa", "btns": "BT", "bufsz": "Ya", "lm": "lm",
-    "lh": "lh", "lw": "lw", "ma": "ma", "mw": "mw",
-    "ncv": "NC", "nlab": "Nl", "pb": "pb", "sg": "sg",
-    "ug": "ug", "vt": "vt", "ws": "ws", "wnum": "dw",
-    "wsl": "ws",
-}
+_TERMINFO_TO_TERMCAP_NUM = dict(p.split(':') for p in (
+    "colors:Co cols:co lines:li it:it pairs:pa btns:BT bufsz:Ya lm:lm lh:lh lw:lw "
+    "ma:ma mw:mw ncv:NC nlab:Nl pb:pb sg:sg ug:ug vt:vt ws:ws wnum:dw wsl:ws").split())
 
-_TERMINFO_TO_TERMCAP_STR = {
-    "acsc": "ac", "bel": "bl", "blink": "mb", "bold": "md",
-    "cbt": "bt", "civis": "vi", "clear": "cl", "cnorm": "ve",
-    "cr": "cr", "csr": "cs", "cub1": "le", "cud": "DO",
-    "cud1": "do", "cuf1": "nd", "cup": "cm", "cuu1": "up",
-    "cvvis": "vs", "dch1": "dC", "dim": "mh", "dl1": "dl",
-    "dsl": "ds", "ech": "ec", "ed": "cd", "el": "ce",
-    "el1": "cb", "flash": "vb", "fsl": "fs", "home": "ho",
-    "hpa": "ch", "hts": "st", "ht": "ta", "ich1": "ic",
-    "il1": "al", "ind": "sf", "invis": "mk", "iprog": "iP",
-    "is1": "i1", "is2": "is", "is3": "i3", "kb2": "K2",
-    "kbs": "kb", "kcbt": "kB", "kcub1": "kl", "kcud1": "kd",
-    "kcuf1": "kr", "kcuu1": "ku", "kdch1": "kD", "kend": "@7",
-    "kent": "@8", "kf1": "k1", "kf2": "k2", "kf3": "k3",
-    "kf4": "k4", "kf5": "k5", "kf6": "k6", "kf7": "k7",
-    "kf8": "k8", "kf9": "k9", "kf10": "k0", "kf11": "F1",
-    "kf12": "F2", "kfnd": "kF", "khlp": "%1", "khome": "kh",
-    "kich1": "kI", "kind": "kH", "knp": "kN", "kpp": "kP",
-    "kprv": "kR", "kspd": "@9", "ktbc": "ka", "mc0": "ps",
-    "mc4": "pf", "mc5": "po", "mc5p": "pO", "nel": "nw",
-    "op": "op", "pad": "pc", "pln": "pn", "prot": "mp",
-    "rep": "rp", "rev": "mr", "ri": "sr", "rmacs": "ae",
-    "rmcup": "te", "rmdc": "ed", "rmir": "ei", "rmkx": "ke",
-    "rmso": "se", "rmul": "ue", "rs1": "r1", "rs2": "r2",
-    "rs3": "r3", "sgr": "sa", "sgr0": "me", "sitm": "ZH",
-    "ritm": "ZR", "smacs": "as", "smcup": "ti", "smdc": "dm",
-    "smir": "im", "smkx": "ks", "smso": "so", "smul": "us",
-    "tbc": "ct", "tsl": "ts", "vpa": "cv", "wind": "wi",
-    "wingo": "WS",
-}
-
-
-def verbose(msg, enabled):
-    if enabled:
-        print(f"ttyscan: {msg}", file=sys.stderr)
+_TERMINFO_TO_TERMCAP_STR = dict(p.split(':') for p in (
+    "acsc:ac bel:bl blink:mb bold:md cbt:bt civis:vi clear:cl cnorm:ve cr:cr "
+    "csr:cs cub1:le cud:DO cud1:do cuf1:nd cup:cm cuu1:up cvvis:vs dch1:dC dim:mh "
+    "dl1:dl dsl:ds ech:ec ed:cd el:ce el1:cb flash:vb fsl:fs home:ho hpa:ch "
+    "hts:st ht:ta ich1:ic il1:al ind:sf invis:mk iprog:iP is1:i1 is2:is is3:i3 "
+    "kb2:K2 kbs:kb kcbt:kB kcub1:kl kcud1:kd kcuf1:kr kcuu1:ku kdch1:kD kend:@7 "
+    "kent:@8 kf1:k1 kf2:k2 kf3:k3 kf4:k4 kf5:k5 kf6:k6 kf7:k7 kf8:k8 kf9:k9 "
+    "kf10:k0 kf11:F1 kf12:F2 kfnd:kF khlp:%1 khome:kh kich1:kI kind:kH knp:kN "
+    "kpp:kP kprv:kR kspd:@9 ktbc:ka mc0:ps mc4:pf mc5:po mc5p:pO nel:nw op:op "
+    "pad:pc pln:pn prot:mp rep:rp rev:mr ri:sr rmacs:ae rmcup:te rmdc:ed rmir:ei "
+    "rmkx:ke rmso:se rmul:ue rs1:r1 rs2:r2 rs3:r3 sgr:sa sgr0:me sitm:ZH ritm:ZR "
+    "smacs:as smcup:ti smdc:dm smir:im smkx:ks smso:so smul:us tbc:ct tsl:ts "
+    "vpa:cv wind:wi wingo:WS").split())
 
 
 def hex_encode(s):
@@ -246,12 +205,10 @@ def unescape_terminfo(value):
 
 def open_tty():
     try:
-        r_fd = os.open('/dev/tty', os.O_RDONLY | os.O_NOCTTY)
-        w_fd = os.open('/dev/tty', os.O_WRONLY | os.O_NOCTTY)
-        return r_fd, w_fd
+        return os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
     except OSError as exc:
         warn(f"cannot open /dev/tty: {exc}")
-        return None, None
+        return None
 
 
 def get_winsize(fd):
@@ -299,39 +256,51 @@ def write_all(fd, data):
             break
 
 
-def read_available(r_fd, timeout):
+def read_available(fd, timeout):
     buf = bytearray()
     stime = time.monotonic()
-    max_size = 131072
     while True:
         timeleft = 0.0 if buf else timeout - (time.monotonic() - stime)
         if not buf and timeleft <= 0:
             break
         try:
-            ready, _, _ = select.select([r_fd], [], [], timeleft)
+            ready, _, _ = select.select([fd], [], [], timeleft)
         except OSError as exc:
             warn(f"select error: {exc}")
             break
         if not ready:
             break
         try:
-            chunk = os.read(r_fd, 4096)
+            chunk = os.read(fd, 4096)
         except OSError as exc:
             warn(f"read error: {exc}")
             break
         if not chunk:
             break
         buf.extend(chunk)
-        if len(buf) > max_size:
+        if len(buf) > _MAX_INPUT:
             break
     return bytes(buf)
+
+
+def read_chunks(fd, timeout):
+    start = time.monotonic()
+    while True:
+        left = timeout - (time.monotonic() - start)
+        if left <= 0:
+            return
+        chunk = read_available(fd, left)
+        if not chunk:
+            return
+        yield chunk.decode('latin-1', errors='replace')
 
 
 class NoCPRReply(Exception):
     """Raised when the terminal does not answer a cursor position report."""
 
 
-def read_until(r_fd, w_fd, queries, pattern, timeout):
+def read_until(fd, queries, pattern=_RE_CPR_BOUNDARY.pattern,
+               timeout=_TTYSCAN_QUERY_TIMEOUT):
     """Read until ``pattern`` matches, using a cursor position report as fence.
 
     The fence reply proves the terminal is answering, and a missing reply means
@@ -340,27 +309,20 @@ def read_until(r_fd, w_fd, queries, pattern, timeout):
     back.
     """
     for q in queries:
-        write_all(w_fd, q)
-    write_all(w_fd, b'\x1b[6n')
-    stime = time.monotonic()
+        write_all(fd, q)
+    write_all(fd, b'\x1b[6n')
     buf = ''
-    max_size = 131072
-    while True:
-        timeleft = timeout - (time.monotonic() - stime)
-        if timeleft <= 0:
-            raise NoCPRReply("no cursor position report")
-        raw = read_available(r_fd, timeleft)
-        if not raw:
-            raise NoCPRReply("no cursor position report")
-        buf += raw.decode('latin-1', errors='replace')
+    for chunk in read_chunks(fd, timeout):
+        buf += chunk
         match = re.search(pattern, buf)
         if match is not None:
             return match, buf
-        if len(buf) > max_size:
+        if len(buf) > _MAX_INPUT:
             raise NoCPRReply("no fence in 128 KiB of input")
+    raise NoCPRReply("no cursor position report")
 
 
-def read_cpr(r_fd, w_fd, timeout, minimum=None):
+def read_cpr(fd, timeout=_TTYSCAN_QUERY_TIMEOUT, minimum=None):
     """Read a cursor position report and return ``(rows, cols)``.
 
     ``minimum`` is the ``(cols, rows)`` size of the tty.  A probe that parks the
@@ -368,44 +330,32 @@ def read_cpr(r_fd, w_fd, timeout, minimum=None):
     smaller report is a late answer to an earlier query and is skipped.
     Raises ``NoCPRReply`` when no acceptable report arrives before ``timeout``.
     """
-    write_all(w_fd, b'\x1b[6n')
-    stime = time.monotonic()
+    write_all(fd, b'\x1b[6n')
     buf = ''
-    while True:
-        timeleft = timeout - (time.monotonic() - stime)
-        if timeleft <= 0:
-            raise NoCPRReply("no cursor position report")
-        raw = read_available(r_fd, timeleft)
-        if not raw:
-            raise NoCPRReply("no cursor position report")
-        buf += raw.decode('latin-1', errors='replace')
+    for chunk in read_chunks(fd, timeout):
+        buf += chunk
         for match in _RE_CPR.finditer(buf):
             rows = int(match.group(1))
             cols = int(match.group(2))
             if minimum is None or (rows >= minimum[1] and cols >= minimum[0]):
                 return rows, cols
+    raise NoCPRReply("no cursor position report")
 
 
-def xtgettcap_query(r_fd, w_fd, caps, timeout):
+def query(fd, requests, pattern, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    fence, data = read_until(fd, requests, timeout=timeout)
+    return re.finditer(pattern, data[:fence.start()] + data[fence.end():])
+
+
+def xtgettcap_query(fd, caps, timeout=_TTYSCAN_QUERY_TIMEOUT):
     """Return the capabilities for *caps* with the number of replies received."""
     if not caps:
         return {}, 0
-    queries = [f'\x1bP+q{hex_encode(c)}\x1b\\' for c in caps]
-    match, data = read_until(r_fd, w_fd, queries, _RE_CPR_BOUNDARY.pattern, timeout)
-    data = data[:match.start()] + data[match.end():]
-    capabilities = {}
-    answered = 0
-    for m in _RE_XTGETTCAP_RESPONSE.finditer(data):
-        answered += 1
-        if m.group(1) == '1':
-            name = hex_decode(m.group(2))
-            val_hex = m.group(3)
-            if val_hex is not None:
-                value = unescape_terminfo(hex_decode(val_hex))
-            else:
-                value = ''
-            capabilities[name] = value
-    return capabilities, answered
+    replies = list(query(fd, [f'\x1bP+q{hex_encode(c)}\x1b\\' for c in caps],
+                         _RE_XTGETTCAP_RESPONSE, timeout))
+    found = {hex_decode(m.group(2)): unescape_terminfo(hex_decode(m.group(3) or ''))
+             for m in replies if m.group(1) == '1'}
+    return found, len(replies)
 
 
 def check_xtgettcap_replies(init_answered, init_asked, answered, asked):
@@ -420,39 +370,26 @@ def check_xtgettcap_replies(init_answered, init_asked, answered, asked):
              f"the batch may be truncated")
 
 
-def _parse_xtversion_text(text):
-    if ' ' in text:
-        name, version = text.split(' ', 1)
-        return name, version
-    if '(' in text:
-        parts = text.split('(', 1)
-        name = parts[0]
-        version = parts[1].rstrip(')')
-        return name, version
-    return text, ''
-
-
-def xtversion_query(r_fd, w_fd, timeout):
-    match, data = read_until(r_fd, w_fd, ['\x1b[>q'],
-                             _RE_CPR_BOUNDARY.pattern, timeout)
-    data = data[:match.start()] + data[match.end():]
-    for m in _RE_XTVERSION_RESPONSE.finditer(data):
-        return _parse_xtversion_text(m.group(1))
+def xtversion_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    for m in query(fd, ['\x1b[>q'], _RE_XTVERSION_RESPONSE, timeout):
+        text = m.group(1)
+        if ' ' in text:
+            return tuple(text.split(' ', 1))
+        if '(' in text:
+            name, version = text.split('(', 1)
+            return name, version.rstrip(')')
+        return text, ''
     return None
 
 
-def decrqm_query(r_fd, w_fd, mode, timeout):
-    match, data = read_until(r_fd, w_fd,
-                             [f'\x1b[?{mode}$p'],
-                             _RE_CPR_BOUNDARY.pattern, timeout)
-    data = data[:match.start()] + data[match.end():]
-    for m in _RE_DECRPM.finditer(data):
+def decrqm_query(fd, mode, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    for m in query(fd, [f'\x1b[?{mode}$p'], _RE_DECRPM, timeout):
         if int(m.group(1)) == mode:
             return int(m.group(2))
     return None
 
 
-def decqss_query(r_fd, w_fd, setting_id, timeout):
+def decqss_query(fd, setting_id, timeout=_TTYSCAN_QUERY_TIMEOUT):
     """Query terminal state via DECRQSS.
 
     Sends ``DCS $ q <setting_id> ST`` with a CPR boundary fence.  Returns the
@@ -460,167 +397,110 @@ def decqss_query(r_fd, w_fd, setting_id, timeout):
     stripped.  Returns ``None`` when the terminal does not support DECRQSS or
     the setting is invalid.
     """
-    match, data = read_until(r_fd, w_fd,
-                             [f'\x1bP$q{setting_id}\x1b\\'],
-                             _RE_CPR_BOUNDARY.pattern, timeout)
-    data = data[:match.start()] + data[match.end():]
-    for m in _RE_DECRQSS_RESPONSE.finditer(data):
+    for m in query(fd, [f'\x1bP$q{setting_id}\x1b\\'], _RE_DECRQSS_RESPONSE, timeout):
         if m.group(1) == '1':
-            pt = m.group(2)
-            if pt.endswith(setting_id):
-                return pt[:-len(setting_id)]
-            return pt
+            text = m.group(2)
+            return text[:-len(setting_id)] if text.endswith(setting_id) else text
     return None
 
 
-def probe_truecolor(r_fd, w_fd, timeout, verbose_enabled):
-    """Detect truecolor support via DECRQSS SGR set/query/restore.
-
-    Queries the current SGR to capture the original rendering state, sets the
-    background to a known truecolor value using colon-delimited RGB, then
-    queries SGR again to verify the color was accepted.  Restores the original
-    SGR afterward.  Returns ``True`` if the probed background color appears in
-    the DECRQSS response, indicating 24-bit color support.
-    """
-    original = decqss_query(r_fd, w_fd, 'm', timeout)
+def probe_truecolor(fd, timeout):
+    """Detect truecolor support via DECRQSS SGR set/query/restore."""
+    original = decqss_query(fd, 'm', timeout)
     if original is None:
-        verbose("DECRQSS not supported by this terminal", verbose_enabled)
+        verbose("DECRQSS not supported by this terminal")
         return False
-
-    probe_bg = '48:2:1:2:3'
-    write_all(w_fd, f'\x1b[{probe_bg}m')
-    probed = decqss_query(r_fd, w_fd, 'm', timeout)
-    write_all(w_fd, f'\x1b[{original}m')
-
+    write_all(fd, '\x1b[48:2:1:2:3m')
+    probed = decqss_query(fd, 'm', timeout)
+    write_all(fd, f'\x1b[{original}m')
     if probed is None:
-        verbose("DECRQSS probe query failed", verbose_enabled)
+        verbose("DECRQSS probe query failed")
         return False
-    # Terminals may normalize the response, e.g. inserting an empty
-    # color-space-identifier or using semicolon delimiters:
-    # "48:2::1:2:3" or "48;2;1;2;3" vs our probe "48:2:1:2:3".
-    # Check for the RGB triple "1 2 3" appearing after a "48 2" prefix
-    # with any combination of colon/semicolon delimiters.
-    result = bool(re.search(r'48[:;]2[:;]*1[:;]2[:;]3', probed))
-    if not result:
-        verbose(f"DECRQSS truecolor probe: color not accepted: {probed!r}",
-                verbose_enabled)
-    return result
+    # Terminals may normalize the response, e.g. "48:2::1:2:3" or
+    # "48;2;1;2;3", so match the RGB triple with either delimiter.
+    accepted = bool(re.search(r'48[:;]2[:;]*1[:;]2[:;]3', probed))
+    if not accepted:
+        verbose(f"DECRQSS truecolor probe: color not accepted: {probed!r}")
+    return accepted
 
 
-def detect_size(r_fd, w_fd, winsize, verbose_enabled, timeout=_TTYSCAN_QUERY_TIMEOUT):
-    decrpm = decrqm_query(r_fd, w_fd, 2048, timeout)
-    has_inband = decrpm is not None and decrpm == 2
-
+def detect_size(fd, winsize, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    has_inband = decrqm_query(fd, 2048, timeout) == 2
     if has_inband:
-        cpr_match, data = read_until(r_fd, w_fd, ['\x1b[?2048h'],
-                                     _RE_CPR.pattern, timeout)
-        resize_match = _RE_RESIZE.search(data[:cpr_match.start()])
-        if resize_match:
-            rows = int(resize_match.group(1))
-            cols = int(resize_match.group(2))
-            verbose(f"size via Mode 2048 in-band: {rows}x{cols}", verbose_enabled)
-            write_all(w_fd, '\x1b[?2048l')
+        cpr, data = read_until(fd, ['\x1b[?2048h'], _RE_CPR.pattern, timeout)
+        resize = _RE_RESIZE.search(data[:cpr.start()])
+        if resize:
+            rows = int(resize.group(1))
+            cols = int(resize.group(2))
+            verbose(f"size via Mode 2048 in-band: {rows}x{cols}")
+            write_all(fd, '\x1b[?2048l')
             return rows, cols, 'inband'
 
-    write_all(w_fd, '\x1b7\x1b[1000;1000H')
-    size = read_cpr(r_fd, w_fd, timeout, minimum=winsize)
-    write_all(w_fd, '\x1b8')
+    write_all(fd, '\x1b7\x1b[1000;1000H')
+    size = read_cpr(fd, timeout, minimum=winsize)
+    write_all(fd, '\x1b8')
 
     if has_inband:
-        write_all(w_fd, '\x1b[?2048l')
+        write_all(fd, '\x1b[?2048l')
 
-    if size is not None:
-        rows, cols = size
-        if rows == 999 or cols == 999:
-            verbose(f"rejecting bogus CPR size {rows}x{cols}", verbose_enabled)
-            return None
-        verbose(f"size via CPR: {rows}x{cols}", verbose_enabled)
-        return rows, cols, 'cpr'
-
-    verbose("size detection failed", verbose_enabled)
-    return None
+    if size is None:
+        verbose("size detection failed")
+        return None
+    rows, cols = size
+    if rows == 999 or cols == 999:
+        verbose(f"rejecting bogus CPR size {rows}x{cols}")
+        return None
+    verbose(f"size via CPR: {rows}x{cols}")
+    return rows, cols, 'cpr'
 
 
 def classify_caps(capabilities):
-    bool_caps = set()
-    num_caps = {}
-    str_caps = {}
-    for name, value in capabilities.items():
-        if name == 'RGB':
-            continue
-        if not value:
-            if name in _BOOL_SET:
-                bool_caps.add(name)
-        elif name in _NUM_SET:
-            if value.isdigit():
-                num_caps[name] = int(value)
-        elif name in _STR_SET:
-            str_caps[name] = value
-    return {'bool_caps': bool_caps, 'num_caps': num_caps, 'str_caps': str_caps}
-
-
-def pack_short_le(buf, offset, value):
-    packed = struct.pack("<h", value)
-    buf[offset:offset + 2] = packed
+    return {
+        'bool_caps': {name for name, value in capabilities.items()
+                      if name in _BOOL_INDEX and not value},
+        'num_caps': {name: int(value) for name, value in capabilities.items()
+                     if name in _NUM_INDEX and value.isdigit()},
+        'str_caps': {name: value for name, value in capabilities.items()
+                     if name in _STR_INDEX and value},
+    }
 
 
 def build_terminfo_binary(term, str_caps, num_caps, bool_caps):
-    names = f"{term}|XTGETTCAP-discovered terminal"
-    names_bytes = names.encode("ascii", errors="replace") + b"\x00"
-    name_size = len(names_bytes)
-    bool_indices = [_BOOL_INDEX[cap] for cap in bool_caps if cap in _BOOL_INDEX]
-    bool_max = max(bool_indices) + 1 if bool_indices else 0
-    bool_data = bytearray(bool_max)
-    for idx in bool_indices:
-        bool_data[idx] = 1
-    num_entries = [(_NUM_INDEX[cap], val) for cap, val in num_caps.items()
-                   if cap in _NUM_INDEX]
-    num_max = max(idx for idx, _ in num_entries) + 1 if num_entries else 0
-    use_32bit = any(val > 32767 or val < -32768 for _, val in num_entries)
-    num_entry_size = 4 if use_32bit else 2
-    magic = _TERMINFO_MAGIC2 if use_32bit else _TERMINFO_MAGIC
-    num_data = bytearray(num_max * num_entry_size)
-    for idx, val in num_entries:
-        if use_32bit:
-            struct.pack_into("<i", num_data, idx * 4, val)
-        else:
-            pack_short_le(num_data, idx * 2, val)
-    num_used = set(idx for idx, _ in num_entries)
-    for i in range(num_max):
-        if i not in num_used:
-            if use_32bit:
-                struct.pack_into("<i", num_data, i * 4, _SENTINEL_ABSENT)
-            else:
-                pack_short_le(num_data, i * 2, _SENTINEL_ABSENT)
-    str_entries = [(_STR_INDEX[cap], val.encode("utf-8", errors="replace"))
-                   for cap, val in str_caps.items() if cap in _STR_INDEX]
-    str_max = max(idx for idx, _ in str_entries) + 1 if str_entries else 0
-    str_table_parts = []
+    names = f"{term}|XTGETTCAP-discovered terminal".encode("ascii", "replace") + b"\x00"
+    flags = {_BOOL_INDEX[cap]: 1 for cap in bool_caps if cap in _BOOL_INDEX}
+    bool_max = max(flags, default=-1) + 1
+    bool_data = bytes(flags.get(idx, 0) for idx in range(bool_max))
+    nums = {_NUM_INDEX[cap]: val for cap, val in num_caps.items()
+            if cap in _NUM_INDEX}
+    num_max = max(nums, default=-1) + 1
+    fmt = "<i" if any(not -32768 <= val <= 32767 for val in nums.values()) else "<h"
+    entry_size = struct.calcsize(fmt)
+    num_data = bytearray(num_max * entry_size)
+    for idx in range(num_max):
+        struct.pack_into(fmt, num_data, idx * entry_size,
+                         nums.get(idx, _SENTINEL_ABSENT))
+    strings = {_STR_INDEX[cap]: val.encode("utf-8", "replace")
+               for cap, val in str_caps.items() if cap in _STR_INDEX}
+    str_max = max(strings, default=-1) + 1
     offsets = {}
-    for idx, raw in sorted(str_entries):
-        offsets[idx] = len(b"".join(str_table_parts))
-        str_table_parts.append(raw + b"\x00")
-    str_table = b"".join(str_table_parts)
+    table = []
+    pos = 0
+    for idx in sorted(strings):
+        offsets[idx] = pos
+        raw = strings[idx] + b"\x00"
+        table.append(raw)
+        pos += len(raw)
+    str_table = b"".join(table)
     offset_data = bytearray(str_max * 2)
-    for i in range(str_max):
-        if i in offsets:
-            pack_short_le(offset_data, i * 2, offsets[i])
-        else:
-            pack_short_le(offset_data, i * 2, _SENTINEL_ABSENT)
-    header = bytearray(12)
-    pack_short_le(header, 0, magic)
-    pack_short_le(header, 2, name_size)
-    pack_short_le(header, 4, bool_max)
-    pack_short_le(header, 6, num_max)
-    pack_short_le(header, 8, str_max)
-    pack_short_le(header, 10, len(str_table))
-    parts = [bytes(header), names_bytes, bytes(bool_data)]
-    if (name_size + bool_max) % 2 != 0:
-        parts.append(b"\x00")
-    parts.append(bytes(num_data))
-    parts.append(bytes(offset_data))
-    parts.append(str_table)
-    return b"".join(parts)
+    for idx in range(str_max):
+        struct.pack_into("<h", offset_data, idx * 2,
+                         offsets.get(idx, _SENTINEL_ABSENT))
+    magic = _TERMINFO_MAGIC2 if fmt == "<i" else _TERMINFO_MAGIC
+    header = struct.pack("<6h", magic, len(names), bool_max, num_max,
+                         str_max, len(str_table))
+    padding = b"\x00" if (len(names) + bool_max) % 2 else b""
+    return b"".join((header, names, bool_data, padding, bytes(num_data),
+                     bytes(offset_data), str_table))
 
 
 def sanitize_term_name(name):
@@ -631,10 +511,6 @@ def sanitize_term_name(name):
 
 def terminfo_file_path(term, base_dir):
     return base_dir / term[0] / term
-
-
-def terminfo_installed_at(term, base_dir):
-    return terminfo_file_path(term, base_dir).exists()
 
 
 def ttyscan_terminfo_dir():
@@ -654,15 +530,6 @@ def has_terminfo(term):
         return False
 
 
-def write_terminfo(term, str_caps, num_caps, bool_caps, dest_dir):
-    safe_term = sanitize_term_name(term)
-    data = build_terminfo_binary(safe_term, str_caps, num_caps, bool_caps)
-    file_path = terminfo_file_path(safe_term, dest_dir)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_bytes(data)
-    return True
-
-
 def escape_value(value, terminfo=False):
     simple = {
         "\x1b": "\\E", "\n": "\\n", "\t": "\\t", "\r": "\\r",
@@ -673,24 +540,11 @@ def escape_value(value, terminfo=False):
         simple[":"] = "\\:"
     result = []
     for ch in value:
-        if ch in simple:
-            result.append(simple[ch])
-            continue
-        code = ord(ch)
-        if code < 32:
-            result.append(f"^{chr(code + 64)}")
-        elif code == 127:
-            result.append("^?")
-        else:
-            result.append(ch)
+        escaped = simple.get(ch)
+        if escaped is None:
+            escaped = '^' + chr(ord(ch) ^ 0x40) if ch < ' ' or ch == '\x7f' else ch
+        result.append(escaped)
     return "".join(result)
-
-
-def shell_escape(value):
-    if not value:
-        return "''"
-    escaped = value.replace("'", "'\\''")
-    return f"'{escaped}'"
 
 
 def build_termcap_entry(term, str_caps, num_caps, bool_caps):
@@ -711,180 +565,99 @@ def build_termcap_entry(term, str_caps, num_caps, bool_caps):
     return "".join(parts)
 
 
-def normalize_terminal_name(raw):
-    if raw == "WezTerm":
-        return "wezterm"
-    return raw
-
-
 def has_meaningful_caps(str_caps, num_caps, bool_caps):
-    screen_str_caps = {k for k in str_caps if not k.startswith('k')}
-    if screen_str_caps:
-        return True
-    if bool_caps:
-        return True
-    meaningful_nums = {k for k in num_caps if k not in ('colors', 'Co')}
-    if meaningful_nums:
-        return True
-    return False
-
-
-def check_colorterm(caps, force):
-    rgb = caps.get("RGB", "")
-    try:
-        if rgb and int(rgb.split("/", 1)[0]) == 8:
-            if force or os.environ.get("COLORTERM") != "truecolor":
-                return "export COLORTERM=truecolor"
-    except ValueError:
-        pass
-    return None
-
-
-def check_term(caps, force):
-    tn = caps.get("TN")
-    if tn:
-        tn = normalize_terminal_name(tn)
-        if force or tn != os.environ.get("TERM"):
-            return f"export TERM={tn}"
-    return None
-
-
-def check_term_program(name, version, force):
-    exports = []
-    env_name = os.environ.get("TERM_PROGRAM", "")
-    if force or env_name != name:
-        exports.append(f"export TERM_PROGRAM={shell_escape(name)}")
-    env_version = os.environ.get("TERM_PROGRAM_VERSION", "")
-    if force or env_version != version:
-        exports.append(f"export TERM_PROGRAM_VERSION={shell_escape(version)}")
-    return exports or None
-
-
-def check_lines_columns(rows, cols, winsize, force):
-    term_cols, term_rows = winsize
-    env_lines = os.environ.get("LINES")
-    env_cols = os.environ.get("COLUMNS")
-    if not force and (rows, cols) == (term_rows, term_cols):
-        if (env_lines is None or env_lines == str(rows)) and \
-           (env_cols is None or env_cols == str(cols)):
-            return None
-    exports = []
-    if force or env_lines != str(rows):
-        exports.append(f"export LINES={rows}")
-    if force or env_cols != str(cols):
-        exports.append(f"export COLUMNS={cols}")
-    return exports or None
+    return bool(bool_caps or any(not cap.startswith('k') for cap in str_caps)
+                or any(cap != 'colors' for cap in num_caps))
 
 
 def generate_exports(verbose_enabled=False, force=False, termcap=False):
-    r_fd, w_fd = open_tty()
-    if r_fd is None or w_fd is None:
-        verbose("no terminal available", verbose_enabled)
+    global _VERBOSE
+    _VERBOSE = verbose_enabled
+
+    fd = open_tty()
+    if fd is None:
+        verbose("no terminal available")
         return []
 
-    saved = set_cbreak(r_fd)
+    saved = set_cbreak(fd)
     try:
-        winsize = get_winsize(r_fd)
+        winsize = get_winsize(fd)
 
-        init_caps, init_answered = xtgettcap_query(
-            r_fd, w_fd, _INIT_XTGETTCAP_CAPS, timeout=_TTYSCAN_QUERY_TIMEOUT)
+        init_caps, init_answered = xtgettcap_query(fd, _INIT_XTGETTCAP_CAPS)
 
         exports = []
 
-        xtversion = None
         if force or os.environ.get("TERM_PROGRAM") is None:
-            xtversion = xtversion_query(r_fd, w_fd, timeout=_TTYSCAN_QUERY_TIMEOUT)
+            xtversion = xtversion_query(fd)
             if xtversion:
                 name, version = xtversion
-                verbose(f"XTVERSION: {name} {version}", verbose_enabled)
-                tp_export = check_term_program(name, version, force)
-                if tp_export:
-                    exports.extend(tp_export)
+                verbose(f"XTVERSION: {name} {version}")
+                exports += env_exports(force, ("TERM_PROGRAM", name),
+                                       ("TERM_PROGRAM_VERSION", version))
             else:
-                verbose("XTVERSION not supported by this terminal", verbose_enabled)
+                verbose("XTVERSION not supported by this terminal")
         else:
-            verbose("skipping XTVERSION (TERM_PROGRAM already set)", verbose_enabled)
+            verbose("skipping XTVERSION (TERM_PROGRAM already set)")
 
-        colorterm = os.environ.get("COLORTERM", "")
-        has_env_tc = colorterm in ("truecolor", "24bit")
-        rgb = init_caps.get("RGB", "") if init_caps else ""
-        has_rgb_tc = False
-        if rgb:
-            try:
-                has_rgb_tc = int(rgb.split("/", 1)[0]) == 8
-            except ValueError:
-                pass
+        try:
+            rgb_tc = int(init_caps.get("RGB", "").split("/", 1)[0]) == 8
+        except ValueError:
+            rgb_tc = False
+        env_tc = os.environ.get("COLORTERM") in ("truecolor", "24bit")
+        probe_tc = False
+        if force or not (env_tc or rgb_tc):
+            probe_tc = probe_truecolor(fd, _TTYSCAN_QUERY_TIMEOUT)
+            if probe_tc:
+                verbose("truecolor confirmed via DECRQSS")
 
-        decrqss_tc = False
-        if force or (not has_env_tc and not has_rgb_tc):
-            if probe_truecolor(r_fd, w_fd, _TTYSCAN_QUERY_TIMEOUT,
-                               verbose_enabled):
-                verbose("truecolor confirmed via DECRQSS", verbose_enabled)
-                decrqss_tc = True
-
-        if decrqss_tc:
+        if (probe_tc or rgb_tc) and (
+                force or os.environ.get("COLORTERM") != "truecolor"):
             exports.append("export COLORTERM=truecolor")
 
-        size = detect_size(r_fd, w_fd, winsize, verbose_enabled)
+        size = detect_size(fd, winsize)
         if size:
             rows, cols, source = size
-            term_cols, term_rows = winsize
-            if source != 'inband' and (
-                rows == 999 or cols == 999
-                or rows < term_rows or cols < term_cols
-            ):
+            if source != 'inband' and (rows < winsize[1] or cols < winsize[0]):
                 verbose(
                     f"rejecting CPR size {rows}x{cols} "
-                    f"(term reports {term_rows}x{term_cols})",
-                    verbose_enabled,
+                    f"(term reports {winsize[1]}x{winsize[0]})",
                 )
             else:
-                lc = check_lines_columns(rows, cols, winsize, force)
-                if lc:
-                    exports.extend(lc)
+                exports += size_exports(rows, cols, winsize, force)
 
         if not init_caps:
-            verbose("XTGETTCAP not supported by this terminal", verbose_enabled)
+            verbose("XTGETTCAP not supported by this terminal")
             return exports
 
         tn_raw = init_caps.get("TN")
         if not tn_raw:
-            verbose("no TN (terminal name) capability, cannot export further",
-                    verbose_enabled)
+            verbose("no TN (terminal name) capability, cannot export further")
             return exports
 
-        tn = normalize_terminal_name(tn_raw)
+        tn = 'wezterm' if tn_raw == 'WezTerm' else tn_raw
+        exports += env_exports(force, ("TERM", tn), quote=str)
 
-        if not decrqss_tc:
-            ct_export = check_colorterm(init_caps, force)
-            if ct_export:
-                exports.append(ct_export)
+        terminfo_dir = ttyscan_terminfo_dir()
+        safe_term = sanitize_term_name(tn)
+        path = terminfo_file_path(safe_term, terminfo_dir)
+        system_ti = has_terminfo(tn)
+        local_ti = path.exists()
 
-        term_export = check_term(init_caps, force)
-        if term_export:
-            exports.append(term_export)
-
-        if not force and not termcap and (
-            has_terminfo(tn)
-            or terminfo_installed_at(sanitize_term_name(tn), ttyscan_terminfo_dir())
-        ):
-            if not has_terminfo(tn):
-                terminfo_value = str(ttyscan_terminfo_dir())
-                current_terminfo = os.environ.get("TERMINFO")
-                if force or current_terminfo != terminfo_value:
-                    exports.append(f"export TERMINFO={terminfo_value}")
-            verbose(f"XTGETTCAP supported, terminal: {tn}", verbose_enabled)
-            verbose("terminfo already available in system database", verbose_enabled)
+        if not (force or termcap) and (system_ti or local_ti):
+            if not system_ti:
+                exports += env_exports(force, ("TERMINFO", terminfo_dir), quote=str)
+            verbose(f"XTGETTCAP supported, terminal: {tn}")
+            verbose("terminfo already available in system database"
+                    if system_ti else f"terminfo exists at {path}")
             return exports
 
-        remaining_caps = [c for c in _FULL_XTGETTCAP_CAPS
-                          if c not in _INIT_XTGETTCAP_CAPS]
+        remaining = [cap for cap in _FULL_XTGETTCAP_CAPS
+                     if cap not in _INIT_XTGETTCAP_CAPS]
         t0 = time.monotonic()
-        full_caps, full_answered = xtgettcap_query(
-            r_fd, w_fd, remaining_caps, timeout=_TTYSCAN_QUERY_TIMEOUT)
+        full_caps, full_answered = xtgettcap_query(fd, remaining)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         check_xtgettcap_replies(init_answered, len(_INIT_XTGETTCAP_CAPS),
-                                full_answered, len(remaining_caps))
+                                full_answered, len(remaining))
 
         full_caps.update(init_caps)
         classified = classify_caps(full_caps)
@@ -892,67 +665,45 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         num_caps = classified['num_caps']
         bool_caps = classified['bool_caps']
 
-        n_caps = len(full_caps)
         verbose(
             f"XTGETTCAP supported, terminal: {tn}; "
-            f"received {n_caps} caps "
+            f"received {len(full_caps)} caps "
             f"({len(bool_caps)} bool, {len(num_caps)} num, {len(str_caps)} str) "
-            f"from {full_answered} of {len(remaining_caps)} replies "
+            f"from {full_answered} of {len(remaining)} replies "
             f"in {elapsed_ms}ms",
-            verbose_enabled,
         )
 
         if not has_meaningful_caps(str_caps, num_caps, bool_caps):
             verbose(
                 "only bare-minimum capabilities (TN/colors/RGB), "
                 "skipping TERMINFO/TERMCAP export",
-                verbose_enabled,
             )
             return exports
 
-        terminfo_dir = ttyscan_terminfo_dir()
-        safe_term = sanitize_term_name(tn)
+        if force or not (system_ti or local_ti):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(build_terminfo_binary(
+                safe_term, str_caps, num_caps, bool_caps))
+            verbose(f"writing {path}")
+        elif system_ti:
+            verbose("terminfo already available in system database")
+        else:
+            verbose(f"terminfo exists at {path}")
 
-        if (not has_terminfo(tn)
-                and not terminfo_installed_at(safe_term, terminfo_dir)) or force:
-            write_terminfo(tn, str_caps, num_caps, bool_caps, terminfo_dir)
-            verbose(f"writing {terminfo_file_path(safe_term, terminfo_dir)}",
-                    verbose_enabled)
-        elif has_terminfo(tn):
-            verbose("terminfo already available in system database", verbose_enabled)
-        elif terminfo_installed_at(safe_term, terminfo_dir):
-            verbose(f"terminfo exists at {terminfo_file_path(safe_term, terminfo_dir)}",
-                    verbose_enabled)
-
-        if force or not has_terminfo(tn):
-            terminfo_value = str(terminfo_dir)
-            if force or os.environ.get("TERMINFO") != terminfo_value:
-                exports.append(f"export TERMINFO={terminfo_value}")
+        if force or not system_ti:
+            exports += env_exports(force, ("TERMINFO", terminfo_dir), quote=str)
 
         if termcap:
             entry = build_termcap_entry(tn, str_caps, num_caps, bool_caps)
-            if entry and (force or os.environ.get("TERMCAP") != entry):
+            if force or os.environ.get("TERMCAP") != entry:
                 exports.append(f"export TERMCAP={shell_escape(entry)}")
 
         return exports
 
     finally:
-        if r_fd is not None:
-            try:
-                termios.tcflush(r_fd, termios.TCIFLUSH)
-            except termios.error:
-                pass
-        restore_termios(r_fd, saved)
-        if r_fd is not None:
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
-        if w_fd is not None:
-            try:
-                os.close(w_fd)
-            except OSError:
-                pass
+        termios.tcflush(fd, termios.TCIFLUSH)
+        restore_termios(fd, saved)
+        os.close(fd)
 
 
 def main(argv=None):
@@ -979,11 +730,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        exports = generate_exports(
-            verbose_enabled=args.verbose,
-            force=args.force,
-            termcap=args.termcap,
-        )
+        exports = generate_exports(args.verbose, args.force, args.termcap)
     except NoCPRReply as exc:
         sys.exit(f"ttyscan: {exc} (is this an interactive terminal?)")
 
