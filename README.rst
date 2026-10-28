@@ -85,12 +85,10 @@ CLI Arguments
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
 previous executions, unless ``--force`` argument is used.
 
-Typical total execution time is under 200ms.  The default query timeout can be changed by
-environment value ``TTYSCAN_QUERY_TIMEOUT=1.0`` (float), in seconds. If timeout is reached, terminal
-response may "bleed" into subsequent programs, (like a shell prompt).
-After receiving the initial response, a secondary drain phase collects any remaining XTGETTCAP
-replies, controlled by ``TTYSCAN_DRAIN_TIMEOUT=0.2`` (float). Increase this value if some
-capabilities are intermittently missing, particularly over high-latency SSH connections.
+Typical total execution time is under 200ms.  Every query uses a following cursor position report
+(CPR) sequence to test for negative response (no support), so the timeout elapses for terminal
+automation (such as tcl/expect pexpect) that acts as a terminal but is not one. The default timeout
+is set by environment value, ``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in second.
 
 Installation
 ------------
