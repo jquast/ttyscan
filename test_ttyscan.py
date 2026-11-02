@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -572,9 +572,11 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
 
     data = (resize_report or "") + "\x1b[31;128R"
     fenced = (_re.search(_RE_CPR, data), data)
+    bare = (_re.search(_RE_CPR, "\x1b[31;128R"), "\x1b[31;128R")
+    returns = [fenced, bare] if decrpm == 2 else []
 
     with patch('ttyscan.decrqm_query', return_value=decrpm), \
-            patch('ttyscan.read_until', return_value=fenced) as mock_read_until, \
+            patch('ttyscan.read_until', side_effect=returns) as mock_read_until, \
             patch('ttyscan.read_cpr', return_value=cpr) as mock_read_cpr, \
             patch('ttyscan.write_all') as mock_write_all, \
             patch('ttyscan.verbose'):
@@ -582,10 +584,12 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
 
     assert result == expected
     if expected == (31, 128, 'inband'):
-        mock_read_until.assert_called_once_with(
-            3, ['\x1b[?2048h'], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT)
+        assert mock_read_until.call_args_list == [
+            call(3, ['\x1b[?2048h'], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT),
+            call(3, [], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT),
+        ]
         mock_read_cpr.assert_not_called()
-        mock_write_all.assert_any_call(3, '\x1b[?2048l')
+        mock_write_all.assert_called_once_with(3, '\x1b[?2048l')
     else:
         mock_read_cpr.assert_called_once_with(
             3, _TTYSCAN_QUERY_TIMEOUT, minimum=(128, 31))
@@ -593,6 +597,29 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
         mock_write_all.assert_any_call(3, '\x1b8')
         if decrpm != 2:
             mock_read_until.assert_not_called()
+
+
+@pytest.mark.parametrize("late,expected", [
+    ("", (31, 128)),
+    ("\x1b[48;32;130;0;0t", (32, 130)),
+    ("\x1b[48;32;130;0;0t\x1b[48;33;131;0;0t", (33, 131)),
+])
+def test_detect_size_uses_the_last_inband_report(late, expected):
+    """Resize reports emitted before the mode reset arrive ahead of the fence."""
+    from ttyscan import detect_size, _RE_CPR
+    import re as _re
+
+    early = "\x1b[48;31;128;0;0t\x1b[31;128R"
+    tail = late + "\x1b[31;128R"
+
+    with patch('ttyscan.decrqm_query', return_value=2), \
+            patch('ttyscan.read_until', side_effect=[
+                (_re.search(_RE_CPR, early), early),
+                (_re.search(_RE_CPR, tail), tail),
+            ]), \
+            patch('ttyscan.write_all'), \
+            patch('ttyscan.verbose'):
+        assert detect_size(3, (128, 31)) == (*expected, 'inband')
 
 
 @pytest.mark.parametrize("chunks,minimum,expected", [
@@ -772,6 +799,37 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
         terminfo_file = terminfo_file_path(safe, terminfo_dir)
         assert terminfo_file.exists()
         assert terminfo_file.stat().st_size > 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+def test_generate_exports_pty_inband_resize(tmp_path):
+    """A report emitted before the mode reset is consumed, and the last one wins."""
+    env = {
+        **dict(os.environ),
+        "XDG_CONFIG_HOME": str(tmp_path),
+        "TTYSCAN_QUERY_TIMEOUT": "0.5",
+        "COVERAGE_FILE": os.path.join(os.path.dirname(__file__), ".coverage"),
+    }
+    env.pop("COLORTERM", None)
+    env.pop("TERM_PROGRAM", None)
+    env["TERM"] = "dumb"
+
+    response = (_CPR_31_128
+                + _CPR_5_10
+                + _CPR_6_7
+                + _DECRPM_set + _CPR_31_128
+                + _RESIZE_31_128 + _CPR_31_128
+                + b"\x1b[48;25;98;0;0t" + _CPR_31_128
+                + _CPR_31_128)
+
+    text, status = _pty_run(
+        [sys.executable, "-m", "coverage", "run", "--append",
+         "-m", "ttyscan"],
+        env, response)
+
+    assert status == 0
+    assert "export LINES=25" in text
+    assert "export COLUMNS=98" in text
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")

@@ -409,20 +409,20 @@ def detect_size(fd, winsize, timeout=_TTYSCAN_QUERY_TIMEOUT):
     has_inband = decrqm_query(fd, 2048, timeout) == 2
     if has_inband:
         cpr, data = read_until(fd, ['\x1b[?2048h'], _RE_CPR.pattern, timeout)
-        resize = _RE_RESIZE.search(data[:cpr.start()])
-        if resize:
-            rows = int(resize.group(1))
-            cols = int(resize.group(2))
+        reports = _RE_RESIZE.findall(data[:cpr.start()])
+        write_all(fd, '\x1b[?2048l')
+        # read_until writes the \x1b[6n, so the reset and its fence go out together;
+        # a resize the terminal handled before the reset sits ahead of the reply.
+        fence, data = read_until(fd, [], _RE_CPR.pattern, timeout)
+        reports += _RE_RESIZE.findall(data[:fence.start()])
+        if reports:
+            rows, cols = int(reports[-1][0]), int(reports[-1][1])
             verbose(f"size via Mode 2048 in-band: {rows}x{cols}")
-            write_all(fd, '\x1b[?2048l')
             return rows, cols, 'inband'
 
     write_all(fd, '\x1b7\x1b[1000;1000H')
     size = read_cpr(fd, timeout, minimum=winsize)
     write_all(fd, '\x1b8')
-
-    if has_inband:
-        write_all(fd, '\x1b[?2048l')
 
     if size is None:
         verbose("size detection failed")
