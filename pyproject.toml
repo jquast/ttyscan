@@ -60,6 +60,7 @@ Homepage = "https://github.com/jquast/ttyscan"
 include = [
   "/ttyscan.py",
   "/test_ttyscan.py",
+  "/bin/update-detect-table.py",
   "/README.rst",
   "/LICENSE",
   "/.gitignore",

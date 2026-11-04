@@ -85,6 +85,14 @@ CLI Arguments
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
 previous executions, unless ``--force`` argument is used.
 
+When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* asks the terminal to name itself.
+It reads an ``XTVERSION`` reply; if that is silent it sends ``ENQ`` and takes the answerback; if both
+are silent it measures the DA1 reply and the grapheme cluster widths that the remaining candidates
+were actually measured on. Only an exact match against the generated table is exported from the
+measurement. A terminal that normally answers ENQ is not in the table. urxvt's default ENQ
+answerback is its DA response, ``ESC [ ? 1 ; 2 c``; *ttyscan* maps that answerback to urxvt. The
+table is generated from ucs-detect's collected data by ``bin/update-detect-table.py``.
+
 Typical total execution time is under 200ms.  Every query uses a following cursor position report
 (CPR) sequence to test for negative response (no support), so the timeout elapses for terminal
 automation (such as tcl/expect pexpect) that acts as a terminal but is not one. The default timeout

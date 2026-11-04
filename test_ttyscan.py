@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,13 +14,17 @@ from ttyscan import (
     build_termcap_entry,
     build_terminfo_binary,
     classify_caps,
+    da1_query,
     decqss_query,
+    detect_terminal,
+    enq_query,
     env_exports,
     escape_value,
     has_meaningful_caps,
     hex_decode,
     hex_encode,
     probe_truecolor,
+    probe_width,
     read_cpr,
     read_until,
     sanitize_term_name,
@@ -32,6 +37,8 @@ from ttyscan import (
     warn,
     NoCPRReply,
     xtversion_query,
+    _TERM_PROBES,
+    _TERM_QUIZ,
 )
 
 
@@ -691,6 +698,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-vft",
      _XT_RESP["tn_xterm"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999
@@ -701,6 +710,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-vft",
      _XT_RESP["tn_xterm"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999
@@ -711,6 +722,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-v",
      _XT_RESP["tn_xterm"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999,
@@ -719,6 +732,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-vft",
      _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999,
@@ -728,6 +743,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-vft",
      _XT_RESP["colors_256"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999,
@@ -737,6 +754,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-vft",
      _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _DECRQSS_SGR_ORIGINAL + _CPR_6_7
      + _DECRQSS_SGR_TRUECOLOR + _CPR_5_10
      + _DECRPM_none + _CPR_5_10
@@ -749,6 +768,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-vft",
      _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999
@@ -758,6 +779,8 @@ _XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
     ("-v",
      _XT_RESP["tn_nonexist"] + _CPR_31_128
      + _CPR_5_10
+     + _CPR_31_128
+     + _CPR_31_128
      + _CPR_6_7
      + _DECRPM_none + _CPR_5_10
      + _CPR_999_999
@@ -816,6 +839,8 @@ def test_generate_exports_pty_inband_resize(tmp_path):
 
     response = (_CPR_31_128
                 + _CPR_5_10
+                + _CPR_31_128
+                + _CPR_31_128
                 + _CPR_6_7
                 + _DECRPM_set + _CPR_31_128
                 + _RESIZE_31_128 + _CPR_31_128
@@ -992,3 +1017,525 @@ def test_decrqss_probe_pty(flags, responses, env_extra, expected,
         assert s in text, f"expected {s!r} not found in output:\n{text}"
     for s in not_expected:
         assert s not in text, f"unexpected {s!r} found in output:\n{text}"
+
+
+@pytest.mark.parametrize("reply,expected", [
+    ("\x1b[?1;2c", ('?', 1, (2,))),
+    ("\x1b[6c", ('', 6, ())),
+    ("\x1b[?64;1;9;15;21;22c", ('?', 64, (1, 9, 15, 21, 22))),
+    ("", None),
+])
+def test_da1_query(reply, expected):
+    """A primary device attributes reply is a service class and extensions."""
+    buf = reply + "\x1b[31;128R"
+    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan.write_all'):
+        assert da1_query(3) == expected
+
+
+@pytest.mark.parametrize("answer,expected", [
+    ("urxvt 9.31", ('urxvt', '9.31')),
+    ("\x1b[?1;2c", ('urxvt', '')),
+    ("PuTTY", ('PuTTY', '')),
+    ("\x1bP>|Extraterm 0.78\x1b\\", ('Extraterm', '0.78')),
+    ("\x1b]0;title\x07urxvt", ('urxvt', '')),
+    ("   ", None),
+    ("", None),
+])
+def test_enq_query(answer, expected):
+    """An answerback names the terminal, with a trailing version when present."""
+    buf = answer + "\x1b[31;128R"
+    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan._drain_fd', return_value=''), \
+            patch('ttyscan.write_all'):
+        assert enq_query(3) == expected
+
+
+def test_enq_query_accepts_an_answer_after_the_cpr():
+    """An answerback that trails the fence is not discarded."""
+    buf = "\x1b[31;128R" + "urxvt 9.31"
+    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan._drain_fd', return_value=''), \
+            patch('ttyscan.write_all'):
+        assert enq_query(3) == ('urxvt', '9.31')
+
+
+def test_enq_query_uses_the_idle_drain():
+    """An answerback that arrives after the fence is read from the drain."""
+    buf = "\x1b[31;128R"
+    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan._drain_fd', return_value='Extraterm 0.81.4'), \
+            patch('ttyscan.write_all'):
+        assert enq_query(3) == ('Extraterm', '0.81.4')
+
+
+@pytest.mark.parametrize("answer", [
+    "\x1b[?6c",
+    "\x1b[31;128R",
+    ">|",
+    "   ",
+])
+def test_enq_query_ignores_stray_replies(answer):
+    """A cursor or device attribute reply is not an answerback."""
+    buf = "\x1b[31;128R" + answer
+    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan._drain_fd', return_value=''), \
+            patch('ttyscan.write_all'):
+        assert enq_query(3) is None
+
+
+def test_probe_width():
+    """The cursor column after the grapheme, minus one, is its width."""
+    probe = _TERM_PROBES[0]
+    buf = "\x1b[1;11R"
+    fence = re.search(r"\x1b\[([0-9]+);([0-9]+)R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)) as mock_read, \
+            patch('ttyscan.write_all'):
+        assert probe_width(3, probe) == 10
+    assert mock_read.call_args[0][1] == [b'\r' + probe.encode('utf-8')]
+
+
+def _ask_sequence(da1, widths):
+    candidates = [row for row in _TERM_QUIZ if row[0] == da1]
+    asked = []
+    while len(candidates) > 1:
+        for index in range(len(_TERM_PROBES)):
+            if not all(index in row[2] for row in candidates):
+                continue
+            if len({row[2][index] for row in candidates}) == 1:
+                continue
+            value = widths[index]
+            asked.append(value)
+            candidates = [row for row in candidates if row[2][index] == value]
+            break
+        else:
+            break
+    return asked
+
+
+def _resolve_set(da1, widths):
+    candidates = [row for row in _TERM_QUIZ if row[0] == da1]
+    while len(candidates) > 1:
+        for index in range(len(_TERM_PROBES)):
+            if not all(index in row[2] for row in candidates):
+                continue
+            if len({row[2][index] for row in candidates}) == 1:
+                continue
+            value = widths[index]
+            candidates = [row for row in candidates if row[2][index] == value]
+            break
+        else:
+            break
+    return [row[1] for row in candidates]
+
+
+def _da1_reply(da1):
+    marker, service, extensions = da1
+    params = ";".join(str(value) for value in (service,) + extensions)
+    return ("\x1b[" + marker + params + "c").encode()
+
+
+def _cpr_for_width(width):
+    return ("\x1b[1;%dR" % (width + 1)).encode()
+
+
+@pytest.mark.parametrize("da1,name,widths", _TERM_QUIZ,
+                         ids=[row[1] for row in _TERM_QUIZ])
+def test_detect_terminal_every_row(da1, name, widths):
+    """Every row either resolves uniquely or reports an honest class."""
+    def fake_width(fd, probe, timeout):
+        return widths[_TERM_PROBES.index(probe)]
+    expected = _resolve_set(da1, widths)
+    with patch.dict(os.environ, {'TERM': ''}), \
+            patch('ttyscan.da1_query', return_value=da1), \
+            patch('ttyscan.probe_width', side_effect=fake_width):
+        result = detect_terminal(3)
+    if len(expected) == 1:
+        assert result == name
+    else:
+        assert name in expected
+        assert result is None
+
+
+@pytest.mark.parametrize("da1,widths", [
+    (None, []),
+    (('?', 99, ()), []),
+    (('?', 6, ()), [99]),
+    (('?', 1, (2,)), [3, 99]),
+])
+def test_detect_terminal_no_match(da1, widths):
+    """An unexpected reply leaves the terminal unnamed."""
+    with patch('ttyscan.da1_query', return_value=da1), \
+            patch('ttyscan.probe_width', side_effect=widths):
+        assert detect_terminal(3) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+@pytest.mark.parametrize("terminal", ["alacritty", "st", "QTerminal", "Hyper",
+                                      "zutty"])
+def test_generate_exports_ladder_pty(terminal, tmp_path):
+    """A silent ENQ falls through to the measured table."""
+    da1, name, widths = next(row for row in _TERM_QUIZ if row[1] == terminal)
+    quiz_replies = [_CPR_31_128, _da1_reply(da1) + _CPR_31_128]
+    quiz_replies += [_cpr_for_width(width) for width in _ask_sequence(da1, widths)]
+
+    env = {
+        **dict(os.environ),
+        "XDG_CONFIG_HOME": str(tmp_path),
+        "TTYSCAN_QUERY_TIMEOUT": "0.5",
+        "COVERAGE_FILE": os.path.join(os.path.dirname(__file__), ".coverage"),
+    }
+    env.pop("COLORTERM", None)
+    env.pop("TERM_PROGRAM", None)
+    env["TERM"] = "dumb"
+
+    responses = [(0.0, _CPR_31_128),
+                 (0.0, _CPR_31_128)]
+    responses += [(0.1, reply) for reply in quiz_replies]
+    responses += [(0.1, _CPR_31_128),
+                  (0.1, _DECRPM_none + _CPR_5_10),
+                  (0.1, _CPR_999_999)]
+
+    text, status = _pty_run_staggered(
+        [sys.executable, "-m", "coverage", "run", "--append",
+         "-m", "ttyscan", "-v"],
+        env, responses)
+
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == 0
+    assert "export TERM_PROGRAM='%s'" % name in text
+    assert "TERM_PROGRAM_VERSION" not in text
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
+@pytest.mark.parametrize("answer,version", [
+    (b"urxvt 9.31", "9.31"),
+    (b"\x1b[?1;2c", ""),
+])
+def test_generate_exports_enq_pty(answer, version, tmp_path):
+    """An ENQ answerback names the terminal before any measurement."""
+    env = {
+        **dict(os.environ),
+        "XDG_CONFIG_HOME": str(tmp_path),
+        "TTYSCAN_QUERY_TIMEOUT": "0.5",
+        "COVERAGE_FILE": os.path.join(os.path.dirname(__file__), ".coverage"),
+    }
+    env.pop("COLORTERM", None)
+    env.pop("TERM_PROGRAM", None)
+    env["TERM"] = "dumb"
+
+    responses = [(0.0, _CPR_31_128),
+                 (0.0, _CPR_31_128),
+                 (0.1, answer + _CPR_31_128),
+                 (0.1, _CPR_31_128),
+                 (0.1, _DECRPM_none + _CPR_5_10),
+                 (0.1, _CPR_999_999)]
+
+    text, status = _pty_run_staggered(
+        [sys.executable, "-m", "coverage", "run", "--append",
+         "-m", "ttyscan", "-v"],
+        env, responses)
+
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == 0
+    assert "export TERM_PROGRAM='urxvt'" in text
+    if version:
+        assert "export TERM_PROGRAM_VERSION='%s'" % version in text
+    else:
+        assert "TERM_PROGRAM_VERSION" not in text
+
+
+GENERATOR = Path(__file__).parent / "bin" / "update-detect-table.py"
+
+
+def _load_generator():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("update_detect_table", GENERATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _fake_data_dir(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    package = tmp_path / "ucs_detect"
+    package.mkdir()
+    (package / "table_narrow.py").write_text(
+        'NARROW_CHARACTERS = (("18.0.0", (0x17D8,)),)\n')
+    (package / "table_zwj.py").write_text(
+        'EMOJI_ZWJ_SEQUENCES = (("18.0.0", ("PROBE-A", "PROBE-B")),)\n')
+    return data_dir
+
+
+def _fake_run(name, da1, values, method=None, tn=None, n_total=10, narrow=None):
+    failed = [{"wchar": probe, "measured_by_terminal": width,
+               "measured_by_wcwidth": 2}
+              for probe, width in values.items()]
+    results = {"emoji_zwj_results": {"17.0": {
+        "n_total": n_total, "failed_codepoints": failed}}}
+    if narrow is not None:
+        results["narrow_results"] = {"18.0.0": {"n_total": n_total,
+                                                "failed_codepoints": narrow}}
+    return {
+        "software_name": name,
+        "wcwidth_version": "0.8.4",
+        "unicode_version": "18.0.0",
+        "terminal_results": {
+            "software_method": method,
+            "device_attributes": {"raw": da1},
+            "xtgettcap": {"capabilities": {"TN": tn} if tn else {}},
+        },
+        "test_results": results,
+    }
+
+
+@pytest.mark.parametrize("value,expected", [
+    (r"\u3248", "\u3248"),
+    (r"\U0001f9d1\U0001f3fb\u200d\U0001faef\u200d\U0001f9d1\U0001f3fc",
+     "\U0001f9d1\U0001f3fb\u200d\U0001faef\u200d\U0001f9d1\U0001f3fc"),
+    ("\u3248", "\u3248"),
+])
+def test_generator_decode_wchar(value, expected):
+    generator = _load_generator()
+    assert generator.decode_wchar(value) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("\x1b[?1;2c", ('?', 1, (2,))),
+    ("\x1b[6c", ('', 6, ())),
+    ("\x1b[?62;4;9;22c", ('?', 62, (4, 9, 22))),
+])
+def test_generator_parse_da1(raw, expected):
+    generator = _load_generator()
+    assert generator.parse_da1(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "\x1b[?c", "x"])
+def test_generator_parse_da1_rejects(raw):
+    generator = _load_generator()
+    with pytest.raises(SystemExit):
+        generator.parse_da1(raw)
+
+
+def test_generator_majority_version():
+    generator = _load_generator()
+    runs = [{"wcwidth_version": "0.8.4"}] * 3 + [{"wcwidth_version": "0.9.2"}]
+    assert generator.majority_version(runs) == "0.8.4"
+
+
+def test_generator_unique_tn():
+    generator = _load_generator()
+    assert generator.unique_tn(_fake_run("A", "\x1b[?1;2c", {}, tn="kitty"))
+    assert not generator.unique_tn(_fake_run("A", "\x1b[?1;2c", {}, tn="xterm"))
+    assert not generator.unique_tn(_fake_run("A", "\x1b[?1;2c", {}))
+
+
+def test_generator_load_width_table_rejects_missing_file(tmp_path):
+    generator = _load_generator()
+    with pytest.raises(SystemExit):
+        generator.load_width_table(tmp_path, "table_narrow", "NARROW_CHARACTERS")
+
+
+def test_generator_build_rows_skips_other_versions_and_named_terminals(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [
+        _fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 2}),
+        _fake_run("Named", "\x1b[?1;2c", {"PROBE-A": 2}, method="XTVERSION"),
+        _fake_run("Answerback", "\x1b[?1;2c", {"PROBE-A": 2}, method="ENQ"),
+        _fake_run("Kitty", "\x1b[?1;2c", {"PROBE-A": 2}, tn="kitty"),
+        _fake_run("Older", "\x1b[?1;2c", {"PROBE-A": 2}),
+    ]
+    runs[-1]["wcwidth_version"] = "0.7.0"
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
+    assert [row["name"] for row in rows] == ["Anonymous"]
+    assert skipped == [("Older", "0.7.0")]
+    assert expected["PROBE-A"] == 2
+    assert rows[0]["values"] == {"PROBE-A": 8, "PROBE-B": 2}
+
+
+def test_generator_build_rows_keeps_only_tested_probes(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [
+        _fake_run("Short", "\x1b[?1;2c", {"PROBE-A": 8}, n_total=1),
+        _fake_run("Full", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 5}),
+    ]
+    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    assert rows[0]["values"] == {"PROBE-A": 8}
+    assert rows[1]["values"] == {"PROBE-A": 8, "PROBE-B": 5}
+
+
+def test_generator_usable_probe():
+    generator = _load_generator()
+    assert generator.usable_probe("\U0001f575\U0001f3ff\u200d\u2642\ufe0f")
+    assert generator.usable_probe("\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe")
+    assert generator.usable_probe("\u17d8")
+    assert not generator.usable_probe("\u0605")
+    assert not generator.usable_probe("\u3248")
+    assert not generator.usable_probe("\ufe0f")
+    assert not generator.usable_probe(
+        "\U0001f9d1\U0001f3ff\u200d\U0001faef\u200d\U0001f9d1\U0001f3fe")
+
+
+def test_generator_build_rows_reads_a_tested_narrow_probe(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    record = [{"wchar": "\u17d8", "measured_by_terminal": 2,
+               "measured_by_wcwidth": 1},
+              {"wchar": "\u0605", "measured_by_terminal": 0,
+               "measured_by_wcwidth": 1}]
+    runs = [
+        _fake_run("Measured", "\x1b[?1;2c", {"PROBE-A": 2}, narrow=record),
+        _fake_run("Tested", "\x1b[?1;2c", {"PROBE-A": 2}, narrow=[]),
+    ]
+    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    assert rows[0]["values"]["\u17d8"] == 2
+    assert rows[1]["values"]["\u17d8"] == 1
+    assert "\u0605" not in rows[0]["values"]
+
+
+def test_generator_choose_probes():
+    generator = _load_generator()
+    rows = [
+        {"name": "A", "da1": ('?', 6, ()), "values": {"P": 0, "Q": 1}},
+        {"name": "B", "da1": ('?', 6, ()), "values": {"P": 1, "Q": 1}},
+        {"name": "C", "da1": ('?', 6, ()), "values": {"P": 1, "Q": 2}},
+        {"name": "Solo", "da1": ('?', 62, ()), "values": {"P": 1, "Q": 1}},
+    ]
+    order, unseparated = generator.choose_probes(rows)
+    assert set(order) == {"P", "Q"}
+    assert unseparated == []
+
+
+def test_generator_choose_probes_reports_an_unseparated_pair():
+    generator = _load_generator()
+    rows = [
+        {"name": "A", "da1": ('?', 6, ()), "values": {"P": 1}},
+        {"name": "B", "da1": ('?', 6, ()), "values": {"P": 1}},
+    ]
+    order, unseparated = generator.choose_probes(rows)
+    assert order == []
+    assert unseparated == [("A", "B")]
+
+
+def test_generator_render_block():
+    generator = _load_generator()
+    rows = [
+        {"name": "A", "da1": ('?', 6, ()), "values": {"P": 0, "Q": 1}},
+        {"name": "B", "da1": ('?', 62, ()), "values": {"P": 1}},
+    ]
+    block = generator.render_block(rows, ["P", "Q"], "note")
+    assert "('?', 6, ())" in block
+    assert "'A'" in block
+    assert "{0: 0, 1: 1}" in block
+    assert block.startswith(generator.START)
+    assert block.endswith(generator.END)
+
+
+def test_generator_main_writes_and_checks(tmp_path):
+    import yaml
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    for run in (_fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 4}),
+                _fake_run("Other", "\x1b[?6c", {"PROBE-A": 2, "PROBE-B": 2}),
+                _fake_run("Older", "\x1b[?6c", {"PROBE-A": 2})):
+        if run["software_name"] == "Older":
+            run["wcwidth_version"] = "0.7.0"
+        with (data_dir / (run["software_name"] + ".yaml")).open("w") as handle:
+            yaml.safe_dump(run, handle)
+
+    target = tmp_path / "ttyscan.py"
+    target.write_text("head\n%s\n%s\ntail\n" % (generator.START, generator.END))
+
+    args = ["--data-dir", str(data_dir), "--target", str(target)]
+    assert generator.main(args) == 0
+    text = target.read_text()
+    assert "'Anonymous'" in text
+    assert generator.START in text and generator.END in text
+    assert generator.main(args + ["--check"]) == 0
+
+    target.write_text(text.replace("'Anonymous'", "'Replaced'"))
+    assert generator.main(args + ["--check"]) == 1
+
+
+def test_generator_main_warns_about_unseparable_terminals(tmp_path, capsys):
+    import yaml
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    for name in ("A", "B"):
+        run = _fake_run(name, "\x1b[?1;2c", {"PROBE-A": 2})
+        with (data_dir / (name + ".yaml")).open("w") as handle:
+            yaml.safe_dump(run, handle)
+
+    target = tmp_path / "ttyscan.py"
+    target.write_text("head\n%s\n%s\ntail\n" % (generator.START, generator.END))
+    assert generator.main(["--data-dir", str(data_dir),
+                           "--target", str(target)]) == 0
+    assert "cannot separate" in capsys.readouterr().err
+    text = target.read_text()
+    assert "'A'" in text and "'B'" in text
+
+
+def test_generator_load_runs_rejects_empty_directory(tmp_path):
+    generator = _load_generator()
+    with pytest.raises(SystemExit):
+        generator.load_runs(tmp_path)
+
+
+def test_generator_majority_version_requires_a_version():
+    generator = _load_generator()
+    with pytest.raises(SystemExit):
+        generator.majority_version([{}, {}])
+
+
+def test_generator_build_rows_rejects_mixed_unicode_versions(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [_fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8}),
+            _fake_run("B", "\x1b[?1;2c", {"PROBE-A": 8})]
+    runs[1]["unicode_version"] = "17.0.0"
+    with pytest.raises(SystemExit):
+        generator.build_rows(runs, data_dir)
+
+
+def test_generator_build_rows_rejects_wcwidth_disagreement(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    run = _fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8})
+    run["test_results"]["narrow_results"] = {"18.0.0": {"failed_codepoints": [
+        {"wchar": "PROBE-A", "measured_by_terminal": 1,
+         "measured_by_wcwidth": 3}]}}
+    with pytest.raises(SystemExit):
+        generator.build_rows([run], data_dir)
+
+
+def test_generator_build_rows_rejects_duplicate_names(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [_fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8}),
+            _fake_run("A", "\x1b[?6c", {"PROBE-A": 2})]
+    with pytest.raises(SystemExit):
+        generator.build_rows(runs, data_dir)
+
+
+def test_generator_source_note_reads_git(tmp_path):
+    generator = _load_generator()
+    subprocess.check_call(["git", "init", "-q", str(tmp_path)])
+    (tmp_path / "x.yaml").write_text("x")
+    subprocess.check_call(["git", "-C", str(tmp_path), "add", "x.yaml"])
+    subprocess.check_call(["git", "-C", str(tmp_path), "-c", "user.email=a@b",
+                           "-c", "user.name=a", "commit", "-qm", "x"])
+
+    note = generator.source_note(tmp_path, [{}], 3, 2)
+    assert note.endswith(": 1 runs, 2 terminals, 3 probes")
+    assert "working tree modified" not in note
+
+    (tmp_path / "x.yaml").write_text("y")
+    assert "working tree modified" in generator.source_note(tmp_path, [], 0, 0)

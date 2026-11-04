@@ -59,6 +59,8 @@ except ValueError:
          f"is not a valid float, using default 10.0")
     _TTYSCAN_QUERY_TIMEOUT = 10.0
 
+_ENQ_GRACE = 0.05
+
 _CANONICAL_BOOL_CAPS = (
     "AX bw am xsb xhp xenl eo gn hc km hs in da db mir msgr os eslok xt hz ul xon "
     "nxon mc5i chts nrrmc npc ndscr ccc bce hls xhpa crxm daisy xvpa sam cpix "
@@ -113,6 +115,10 @@ _RE_XTGETTCAP_RESPONSE = re.compile(
 _RE_XTVERSION_RESPONSE = re.compile(r'\x1bP>\|(.+?)\x1b\\')
 _RE_CPR = re.compile(r'\x1b\[(\d+);(\d+)R')
 _RE_CPR_BOUNDARY = re.compile(r'\x1b\[[0-9]+;[0-9]+R')
+_RE_DA1 = re.compile(r'\x1b\[(\??)([0-9;]*)c')
+_RE_CSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+_RE_OSC_RESPONSE = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)')
+_RE_RXVT_ANSWERBACK = re.compile(r'\x1b\[\?1;2c')
 _RE_DECRPM = re.compile(r'\x1b\[\?(\d+);([0-4])\$y')
 _RE_RESIZE = re.compile(r'\x1b\[48;(\d+);(\d+);(\d+);(\d+)t')
 _RE_DECRQSS_RESPONSE = re.compile(r'\x1bP([01])\$r([^\x1b]*)\x1b\\')
@@ -121,6 +127,48 @@ _TERMINFO_MAGIC = 0o432
 _TERMINFO_MAGIC2 = 0o1036
 _SENTINEL_ABSENT = -1
 _MAX_INPUT = 131072
+
+# BEGIN GENERATED TERMINAL QUIZ: bin/update-detect-table.py
+# ucs-detect data @ 50f011d, working tree modified: 36 runs, 14 terminals, 5 probes
+_TERM_PROBES = (
+    '\U0001f575\U0001f3ff\u200d\u2642\ufe0f',
+    '\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe',
+    '\u1c8a',
+    '\u17d8',
+    '\u06de',
+)
+
+_TERM_QUIZ = (
+    (('?', 1, (2,)),
+     'Apple_Terminal', {0: 5, 1: 9, 2: 1, 3: 1, 4: 1}),
+    (('?', 1, (2,)),
+     'ConEmu', {0: 6, 1: 9, 2: 1, 3: 1, 4: 1}),
+    (('?', 1, (2,)),
+     'GNU Screen', {0: 4, 1: 8, 2: 1, 3: 1, 4: 0}),
+    (('?', 1, (2,)),
+     'Hyper', {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
+    (('?', 1, (2,)),
+     'QTerminal', {0: 4, 1: 8, 2: 0, 3: 1, 4: 1}),
+    (('?', 1, (2,)),
+     'TeraTerm', {0: 1, 2: 1, 3: 1, 4: 1}),
+    (('?', 1, (2,)),
+     'cool-retro-term', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+    (('?', 6, ()),
+     'alacritty', {0: 4, 3: 2, 4: 1}),
+    (('?', 6, ()),
+     'st', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+    (('?', 6, ()),
+     'weston-terminal', {0: 6, 1: 9, 2: 1, 3: 1, 4: 1}),
+    (('?', 61, (4, 6, 7, 14, 21, 22, 23, 24, 28, 32, 42, 52)),
+     'WindowsTerminal', {2: 1, 3: 1, 4: 1}),
+    (('?', 62, (1, 2, 6, 7, 8, 9)),
+     'securecrt', {0: 4, 1: 6, 2: 1, 3: 1, 4: 0}),
+    (('?', 62, (4, 9, 22)),
+     'Tabby', {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
+    (('?', 64, (1, 9, 15, 21, 22)),
+     'zutty', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+)
+# END GENERATED TERMINAL QUIZ
 
 _BOOL_INDEX = {name: idx for idx, name in enumerate(_CANONICAL_BOOL_CAPS)}
 _NUM_INDEX = {name: idx for idx, name in enumerate(_CANONICAL_NUM_CAPS)}
@@ -370,6 +418,99 @@ def xtversion_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
     return None
 
 
+def da1_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    """Return ``(marker, service_class, extensions)`` from a DA1 reply."""
+    for m in query(fd, ['\x1b[c'], _RE_DA1, timeout):
+        params = [int(part) for part in m.group(2).split(';') if part.isdigit()]
+        if params:
+            return m.group(1), params[0], tuple(sorted(params[1:]))
+    return None
+
+
+def _drain_fd(fd, grace):
+    """Return any input that arrives within *grace* seconds of an idle period."""
+    chunks = []
+    deadline = time.monotonic() + grace
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        ready, _, _ = select.select([fd], [], [], remaining)
+        if not ready:
+            break
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b''.join(chunks).decode('latin-1', 'replace')
+
+
+def enq_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    """Return ``(name, version)`` from the answerback of an ENQ (0x05) query."""
+    termios.tcflush(fd, termios.TCIFLUSH)
+    fence, data = read_until(fd, ['\x05'], timeout=timeout)
+    answer = data[:fence.start()] + data[fence.end():]
+    if not answer.strip():
+        answer = _drain_fd(fd, _ENQ_GRACE)
+    write_all(fd, '\r\x1b[K')
+    if _RE_RXVT_ANSWERBACK.search(answer):
+        return 'urxvt', ''
+    answer = _RE_CSI.sub('', answer)
+    answer = _RE_OSC_RESPONSE.sub('', answer)
+    match = re.search(r'\x1bP(.*?)(?:\x1b\\|\x9c)', answer, re.S)
+    if match is not None:
+        answer = match.group(1)
+    answer = ''.join(ch for ch in answer if ch.isprintable()).strip()
+    if answer.startswith('>|'):
+        answer = answer[2:].strip()
+    if not answer or not answer[0].isalpha():
+        return None
+    parts = answer.split()
+    if len(parts) >= 2 and any(ch.isdigit() for ch in parts[-1]):
+        return ' '.join(parts[:-1]), parts[-1]
+    return answer, ''
+
+
+def probe_width(fd, grapheme, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    """Return the number of columns *grapheme* occupies when drawn from column 1."""
+    fence, data = read_until(fd, [b'\r' + grapheme.encode('utf-8')],
+                             _RE_CPR.pattern, timeout)
+    write_all(fd, '\r\x1b[K')
+    return int(fence.group(2)) - 1
+
+
+def detect_terminal(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
+    """Name a terminal that answered neither XTVERSION nor ENQ, by measurement."""
+    da1 = da1_query(fd, timeout)
+    if da1 is None:
+        verbose("DA1: no reply")
+        return None
+    candidates = [row for row in _TERM_QUIZ if row[0] == da1]
+    if not candidates:
+        verbose(f"DA1 {da1}: no exact match")
+        return None
+    while len(candidates) > 1:
+        for index, probe in enumerate(_TERM_PROBES):
+            if not all(index in row[2] for row in candidates):
+                continue
+            if len({row[2][index] for row in candidates}) == 1:
+                continue
+            width = probe_width(fd, probe, timeout)
+            verbose(f"grapheme width {width} for probe {index}")
+            candidates = [row for row in candidates if row[2][index] == width]
+            if not candidates:
+                verbose(f"DA1 {da1}, probe {index}: no exact match")
+                return None
+            break
+        else:
+            break
+    if len(candidates) == 1:
+        verbose(f"measured terminal: {candidates[0][1]}")
+        return candidates[0][1]
+    verbose("ambiguous: " + ", ".join(sorted(row[1] for row in candidates)))
+    return None
+
+
 def decrqm_query(fd, mode, timeout=_TTYSCAN_QUERY_TIMEOUT):
     for m in query(fd, [f'\x1b[?{mode}$p'], _RE_DECRPM, timeout):
         if int(m.group(1)) == mode:
@@ -564,7 +705,9 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
     try:
         winsize = get_winsize(fd)
 
+        write_all(fd, '\x1b7')
         init_caps, init_answered = xtgettcap_query(fd, _INIT_XTGETTCAP_CAPS)
+        write_all(fd, '\x1b8\x1b[K')
 
         exports = []
 
@@ -577,6 +720,21 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
                                        ("TERM_PROGRAM_VERSION", version))
             else:
                 verbose("XTVERSION not supported by this terminal")
+                enq = enq_query(fd)
+                if enq:
+                    name, version = enq
+                    verbose(f"ENQ: {name} {version}")
+                    exports += env_exports(force, ("TERM_PROGRAM", name))
+                    if version:
+                        exports += env_exports(
+                            force, ("TERM_PROGRAM_VERSION", version))
+                else:
+                    verbose("ENQ not answered")
+                    measured = detect_terminal(fd)
+                    if measured:
+                        exports += env_exports(force, ("TERM_PROGRAM", measured))
+                    else:
+                        verbose("terminal not identified by measurement")
         else:
             verbose("skipping XTVERSION (TERM_PROGRAM already set)")
 
@@ -635,7 +793,9 @@ def generate_exports(verbose_enabled=False, force=False, termcap=False):
         remaining = [cap for cap in _FULL_XTGETTCAP_CAPS
                      if cap not in _INIT_XTGETTCAP_CAPS]
         t0 = time.monotonic()
+        write_all(fd, '\x1b7')
         full_caps, full_answered = xtgettcap_query(fd, remaining)
+        write_all(fd, '\x1b8\x1b[K')
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         check_xtgettcap_replies(init_answered, len(_INIT_XTGETTCAP_CAPS),
                                 full_answered, len(remaining))
