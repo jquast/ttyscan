@@ -128,8 +128,8 @@ _TERMINFO_MAGIC2 = 0o1036
 _SENTINEL_ABSENT = -1
 _MAX_INPUT = 131072
 
-# BEGIN GENERATED TERMINAL QUIZ: bin/update-detect-table.py
-# ucs-detect data @ 50f011d, working tree modified: 36 runs, 14 terminals, 5 probes
+# BEGIN GENERATED TERMINAL QUIZ: update-detect-table.py
+# ucs-detect data @ 30d3871, working tree modified: 37 runs, 14 terminals, 5 probes
 _TERM_PROBES = (
     '\U0001f575\U0001f3ff\u200d\u2642\ufe0f',
     '\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe',
@@ -473,15 +473,21 @@ def enq_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
 
 def probe_width(fd, grapheme, timeout=_TTYSCAN_QUERY_TIMEOUT):
     """Return the number of columns *grapheme* occupies when drawn from column 1."""
-    fence, data = read_until(fd, [b'\r' + grapheme.encode('utf-8')],
-                             _RE_CPR.pattern, timeout)
-    write_all(fd, '\r\x1b[K')
+    try:
+        fence, _data = read_until(fd, [b'\r' + grapheme.encode('utf-8')],
+                                  _RE_CPR.pattern, timeout)
+    finally:
+        write_all(fd, '\r\x1b[K')
     return int(fence.group(2)) - 1
 
 
 def detect_terminal(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
     """Name a terminal that answered neither XTVERSION nor ENQ, by measurement."""
-    da1 = da1_query(fd, timeout)
+    try:
+        da1 = da1_query(fd, timeout)
+    except NoCPRReply:
+        verbose("DA1: no cursor position report")
+        return None
     if da1 is None:
         verbose("DA1: no reply")
         return None
@@ -495,7 +501,11 @@ def detect_terminal(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
                 continue
             if len({row[2][index] for row in candidates}) == 1:
                 continue
-            width = probe_width(fd, probe, timeout)
+            try:
+                width = probe_width(fd, probe, timeout)
+            except NoCPRReply:
+                verbose(f"probe {index}: no cursor position report")
+                continue
             verbose(f"grapheme width {width} for probe {index}")
             candidates = [row for row in candidates if row[2][index] == width]
             if not candidates:

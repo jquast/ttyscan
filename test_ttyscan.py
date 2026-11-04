@@ -1100,6 +1100,15 @@ def test_probe_width():
     assert mock_read.call_args[0][1] == [b'\r' + probe.encode('utf-8')]
 
 
+def test_probe_width_erases_a_grapheme_left_by_a_missing_cpr():
+    """A grapheme is erased even when its cursor position report never arrives."""
+    with patch('ttyscan.read_until', side_effect=NoCPRReply("no fence")), \
+            patch('ttyscan.write_all') as mock_write:
+        with pytest.raises(NoCPRReply):
+            probe_width(3, _TERM_PROBES[0])
+    mock_write.assert_called_with(3, '\r\x1b[K')
+
+
 def _ask_sequence(da1, widths):
     candidates = [row for row in _TERM_QUIZ if row[0] == da1]
     asked = []
@@ -1172,6 +1181,37 @@ def test_detect_terminal_no_match(da1, widths):
     """An unexpected reply leaves the terminal unnamed."""
     with patch('ttyscan.da1_query', return_value=da1), \
             patch('ttyscan.probe_width', side_effect=widths):
+        assert detect_terminal(3) is None
+
+
+def test_detect_terminal_da1_without_a_cpr():
+    """A DA1 query without a cursor position report leaves the terminal unnamed."""
+    with patch('ttyscan.da1_query', side_effect=NoCPRReply("no fence")):
+        assert detect_terminal(3) is None
+
+
+def _failing_first_probe(widths):
+    def fake_width(fd, probe, timeout):
+        if probe == _TERM_PROBES[0]:
+            raise NoCPRReply("no fence")
+        return widths[_TERM_PROBES.index(probe)]
+    return fake_width
+
+
+@pytest.mark.parametrize("terminal", ["GNU Screen", "QTerminal", "alacritty", "st"])
+def test_detect_terminal_probe_without_a_cpr_falls_through(terminal):
+    """A probe without a cursor position report leaves the next probe to decide."""
+    da1, name, widths = next(row for row in _TERM_QUIZ if row[1] == terminal)
+    with patch('ttyscan.da1_query', return_value=da1), \
+            patch('ttyscan.probe_width', side_effect=_failing_first_probe(widths)):
+        assert detect_terminal(3) == name
+
+
+def test_detect_terminal_probe_without_a_cpr_reports_the_class():
+    """A terminal separable only by the failed probe is reported as a class."""
+    da1, _name, widths = next(row for row in _TERM_QUIZ if row[1] == "Hyper")
+    with patch('ttyscan.da1_query', return_value=da1), \
+            patch('ttyscan.probe_width', side_effect=_failing_first_probe(widths)):
         assert detect_terminal(3) is None
 
 
@@ -1250,7 +1290,7 @@ def test_generate_exports_enq_pty(answer, version, tmp_path):
         assert "TERM_PROGRAM_VERSION" not in text
 
 
-GENERATOR = Path(__file__).parent / "bin" / "update-detect-table.py"
+GENERATOR = Path(__file__).parent / "update-detect-table.py"
 
 
 def _load_generator():

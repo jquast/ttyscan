@@ -91,7 +91,7 @@ are silent it measures the DA1 reply and the grapheme cluster widths that the re
 were actually measured on. Only an exact match against the generated table is exported from the
 measurement. A terminal that normally answers ENQ is not in the table. urxvt's default ENQ
 answerback is its DA response, ``ESC [ ? 1 ; 2 c``; *ttyscan* maps that answerback to urxvt. The
-table is generated from ucs-detect's collected data by ``bin/update-detect-table.py``.
+table is generated from ucs-detect's collected data by ``tox -e update``.
 
 Typical total execution time is under 200ms.  Every query uses a following cursor position report
 (CPR) sequence to test for negative response (no support), so the timeout elapses for terminal
