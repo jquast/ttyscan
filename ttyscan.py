@@ -59,8 +59,6 @@ except ValueError:
          f"is not a valid float, using default 10.0")
     _TTYSCAN_QUERY_TIMEOUT = 10.0
 
-_ENQ_GRACE = 0.05
-
 _CANONICAL_BOOL_CAPS = (
     "AX bw am xsb xhp xenl eo gn hc km hs in da db mir msgr os eslok xt hz ul xon "
     "nxon mc5i chts nrrmc npc ndscr ccc bce hls xhpa crxm daisy xvpa sam cpix "
@@ -129,44 +127,41 @@ _SENTINEL_ABSENT = -1
 _MAX_INPUT = 131072
 
 # BEGIN GENERATED TERMINAL QUIZ: update-detect-table.py
-# ucs-detect data @ 30d3871, working tree modified: 37 runs, 14 terminals, 5 probes
+# ucs-detect data @ 1af1052, working tree modified: 40 runs, 13 terminals, 4 probes
 _TERM_PROBES = (
     '\U0001f575\U0001f3ff\u200d\u2642\ufe0f',
     '\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe',
     '\u1c8a',
     '\u17d8',
-    '\u06de',
 )
 
 _TERM_QUIZ = (
     (('?', 1, (2,)),
-     'Apple_Terminal', {0: 5, 1: 9, 2: 1, 3: 1, 4: 1}),
+     'Apple_Terminal', {0: 5, 1: 9}),
     (('?', 1, (2,)),
-     'ConEmu', {0: 6, 1: 9, 2: 1, 3: 1, 4: 1}),
+     'ConEmu', {0: 6, 1: 9}),
     (('?', 1, (2,)),
-     'GNU Screen', {0: 4, 1: 8, 2: 1, 3: 1, 4: 0}),
+     'Hyper', {0: 4, 1: 6}),
     (('?', 1, (2,)),
-     'Hyper', {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
+     'QTerminal', {0: 4, 1: 8, 2: 0, 3: 1}),
     (('?', 1, (2,)),
-     'QTerminal', {0: 4, 1: 8, 2: 0, 3: 1, 4: 1}),
+     'TeraTerm', {0: 1}),
     (('?', 1, (2,)),
-     'TeraTerm', {0: 1, 2: 1, 3: 1, 4: 1}),
-    (('?', 1, (2,)),
-     'cool-retro-term', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+     'cool-retro-term', {0: 4, 1: 8, 2: 1, 3: 1}),
     (('?', 6, ()),
-     'alacritty', {0: 4, 3: 2, 4: 1}),
+     'alacritty', {0: 4, 2: 1, 3: 2}),
     (('?', 6, ()),
-     'st', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+     'st', {0: 4, 1: 8, 2: 1, 3: 1}),
     (('?', 6, ()),
-     'weston-terminal', {0: 6, 1: 9, 2: 1, 3: 1, 4: 1}),
+     'weston-terminal', {0: 6, 1: 9}),
     (('?', 61, (4, 6, 7, 14, 21, 22, 23, 24, 28, 32, 42, 52)),
-     'WindowsTerminal', {2: 1, 3: 1, 4: 1}),
+     'WindowsTerminal', {}),
     (('?', 62, (1, 2, 6, 7, 8, 9)),
-     'securecrt', {0: 4, 1: 6, 2: 1, 3: 1, 4: 0}),
+     'securecrt', {0: 4, 1: 6}),
     (('?', 62, (4, 9, 22)),
-     'Tabby', {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
+     'Tabby', {0: 4, 1: 6, 2: 1, 3: 1}),
     (('?', 64, (1, 9, 15, 21, 22)),
-     'zutty', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+     'zutty', {0: 4, 1: 8, 2: 1, 3: 1}),
 )
 # END GENERATED TERMINAL QUIZ
 
@@ -427,31 +422,11 @@ def da1_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
     return None
 
 
-def _drain_fd(fd, grace):
-    """Return any input that arrives within *grace* seconds of an idle period."""
-    chunks = []
-    deadline = time.monotonic() + grace
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        ready, _, _ = select.select([fd], [], [], remaining)
-        if not ready:
-            break
-        chunk = os.read(fd, 4096)
-        if not chunk:
-            break
-        chunks.append(chunk)
-    return b''.join(chunks).decode('latin-1', 'replace')
-
-
 def enq_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
     """Return ``(name, version)`` from the answerback of an ENQ (0x05) query."""
     termios.tcflush(fd, termios.TCIFLUSH)
     fence, data = read_until(fd, ['\x05'], timeout=timeout)
     answer = data[:fence.start()] + data[fence.end():]
-    if not answer.strip():
-        answer = _drain_fd(fd, _ENQ_GRACE)
     write_all(fd, '\r\x1b[K')
     if _RE_RXVT_ANSWERBACK.search(answer):
         return 'urxvt', ''

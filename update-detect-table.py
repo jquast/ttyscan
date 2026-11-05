@@ -19,6 +19,9 @@ except ImportError:  # pragma: no cover
 
 CATEGORIES = ("narrow_results", "emoji_zwj_results")
 
+# Multiplexers can relay host DA1 and widths, and so are unreliable for this purpose
+EXCLUDE = frozenset({"GNU Screen", "tmux", "Zellij"})
+
 START = "# BEGIN GENERATED TERMINAL QUIZ: update-detect-table.py"
 END = "# END GENERATED TERMINAL QUIZ"
 
@@ -88,14 +91,14 @@ def load_width_table(data_dir, module, variable):
 
 def build_rows(runs, data_dir):
     """Return one row per terminal with the probe widths that were measured for it."""
-    version = majority_version(runs)
     usable, skipped = [], []
     for run in runs:
-        if run.get("wcwidth_version") == version:
+        version = run.get("wcwidth_version")
+        if (version and version_key(version) >= (0, 8)
+                and run.get("unicode_version")):
             usable.append(run)
         else:
-            skipped.append((run.get("_file", run.get("software_name")),
-                            run.get("wcwidth_version")))
+            skipped.append((run.get("_file", run.get("software_name")), version))
     unicode_versions = {run.get("unicode_version") for run in usable}
     if len(unicode_versions) != 1:
         raise SystemExit("update-detect-table: mixed Unicode versions %r"
@@ -104,6 +107,7 @@ def build_rows(runs, data_dir):
     failed, expected, category, total = {}, {}, {}, defaultdict(int)
     for run in usable:
         name = run["software_name"]
+        version = run.get("wcwidth_version")
         for category_name in CATEGORIES:
             for body in ((run.get("test_results") or {}).get(category_name) or {}).values():
                 total[(name, category_name)] = max(
@@ -112,18 +116,20 @@ def build_rows(runs, data_dir):
                     grapheme = decode_wchar(record["wchar"])
                     failed[(name, grapheme)] = record["measured_by_terminal"]
                     category[grapheme] = category_name
-                    width = expected.setdefault(grapheme, record["measured_by_wcwidth"])
+                    width = expected.setdefault(
+                        (version, grapheme), record["measured_by_wcwidth"])
                     if width != record["measured_by_wcwidth"]:
                         raise SystemExit(
-                            "update-detect-table: wcwidth disagrees on %r: %r vs %r"
-                            % (grapheme, width, record["measured_by_wcwidth"]))
+                            "update-detect-table: wcwidth disagrees on %r in %r: %r vs %r"
+                            % (grapheme, version, width,
+                               record["measured_by_wcwidth"]))
 
     narrow = load_width_table(data_dir, "table_narrow", "NARROW_CHARACTERS")
     zwj = load_width_table(data_dir, "table_zwj", "EMOJI_ZWJ_SEQUENCES")
     narrow_rank = {codepoint: index for index, codepoint in enumerate(narrow)}
     zwj_rank = {grapheme: index for index, grapheme in enumerate(zwj)}
 
-    def measured_width(name, grapheme):
+    def measured_width(name, grapheme, version):
         if (name, grapheme) in failed:
             return failed[(name, grapheme)]
         kind = category.get(grapheme)
@@ -134,19 +140,23 @@ def build_rows(runs, data_dir):
             rank = zwj_rank.get(grapheme)
         if rank is None or rank >= total.get((name, kind), 0):
             return None
-        return expected[grapheme]
+        return expected.get((version, grapheme))
 
     rows = []
     for run in usable:
         results = run.get("terminal_results") or {}
+        name = run["software_name"]
+        if name in EXCLUDE:
+            print("excluding %s" % name, file=sys.stderr)
+            continue
         if results.get("software_method") in ("XTVERSION", "ENQ") or unique_tn(run):
             continue
-        name = run["software_name"]
+        version = run.get("wcwidth_version")
         values = {}
         for grapheme in category:
             if not usable_probe(grapheme):
                 continue
-            width = measured_width(name, grapheme)
+            width = measured_width(name, grapheme, version)
             if width is not None:
                 values[grapheme] = width
         rows.append({
@@ -276,9 +286,9 @@ def main(argv=None):
     probes, unseparated = choose_probes(rows)
     if unseparated:
         print("warning: cannot separate %r" % (unseparated,), file=sys.stderr)
-    note = source_note(args.data_dir, [run for run in runs
-                                       if run.get("wcwidth_version") ==
-                                       majority_version(runs)],
+    note = source_note(args.data_dir,
+                       [run for run in runs
+                        if run.get("_file") not in {name for name, _ in skipped}],
                        len(probes), len(rows))
     block = render_block(rows, probes, note)
 

@@ -1048,7 +1048,6 @@ def test_enq_query(answer, expected):
     buf = answer + "\x1b[31;128R"
     fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)), \
-            patch('ttyscan._drain_fd', return_value=''), \
             patch('ttyscan.write_all'):
         assert enq_query(3) == expected
 
@@ -1058,19 +1057,8 @@ def test_enq_query_accepts_an_answer_after_the_cpr():
     buf = "\x1b[31;128R" + "urxvt 9.31"
     fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)), \
-            patch('ttyscan._drain_fd', return_value=''), \
             patch('ttyscan.write_all'):
         assert enq_query(3) == ('urxvt', '9.31')
-
-
-def test_enq_query_uses_the_idle_drain():
-    """An answerback that arrives after the fence is read from the drain."""
-    buf = "\x1b[31;128R"
-    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
-    with patch('ttyscan.read_until', return_value=(fence, buf)), \
-            patch('ttyscan._drain_fd', return_value='Extraterm 0.81.4'), \
-            patch('ttyscan.write_all'):
-        assert enq_query(3) == ('Extraterm', '0.81.4')
 
 
 @pytest.mark.parametrize("answer", [
@@ -1084,7 +1072,6 @@ def test_enq_query_ignores_stray_replies(answer):
     buf = "\x1b[31;128R" + answer
     fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)), \
-            patch('ttyscan._drain_fd', return_value=''), \
             patch('ttyscan.write_all'):
         assert enq_query(3) is None
 
@@ -1198,13 +1185,13 @@ def _failing_first_probe(widths):
     return fake_width
 
 
-@pytest.mark.parametrize("terminal", ["GNU Screen", "QTerminal", "alacritty", "st"])
-def test_detect_terminal_probe_without_a_cpr_falls_through(terminal):
-    """A probe without a cursor position report leaves the next probe to decide."""
-    da1, name, widths = next(row for row in _TERM_QUIZ if row[1] == terminal)
+@pytest.mark.parametrize("terminal", ["QTerminal", "alacritty", "st"])
+def test_detect_terminal_probe_without_a_cpr_stays_unresolved(terminal):
+    """A failed first probe leaves a group that only that probe could split."""
+    da1, _name, widths = next(row for row in _TERM_QUIZ if row[1] == terminal)
     with patch('ttyscan.da1_query', return_value=da1), \
             patch('ttyscan.probe_width', side_effect=_failing_first_probe(widths)):
-        assert detect_terminal(3) == name
+        assert detect_terminal(3) is None
 
 
 def test_detect_terminal_probe_without_a_cpr_reports_the_class():
@@ -1396,8 +1383,25 @@ def test_generator_build_rows_skips_other_versions_and_named_terminals(tmp_path)
     rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert [row["name"] for row in rows] == ["Anonymous"]
     assert skipped == [("Older", "0.7.0")]
-    assert expected["PROBE-A"] == 2
+    assert expected[("0.8.4", "PROBE-A")] == 2
     assert rows[0]["values"] == {"PROBE-A": 8, "PROBE-B": 2}
+
+
+def test_generator_build_rows_excludes_multiplexers(tmp_path, capsys):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [
+        _fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8}),
+        _fake_run("GNU Screen", "\x1b[?1;2c", {"PROBE-A": 2}),
+        _fake_run("tmux", "\x1b[?1;2c", {"PROBE-A": 2}),
+        _fake_run("Zellij", "\x1b[?1;2c", {"PROBE-A": 2}),
+    ]
+    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    assert [row["name"] for row in rows] == ["Anonymous"]
+    err = capsys.readouterr().err
+    assert "excluding GNU Screen" in err
+    assert "excluding tmux" in err
+    assert "excluding Zellij" in err
 
 
 def test_generator_build_rows_keeps_only_tested_probes(tmp_path):
