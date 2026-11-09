@@ -5,7 +5,8 @@ ttyscan
 
 *ttyscan* queries a terminal emulator for its type, size and capabilities, creating a
 curses-compatible `terminfo(5)`_ file entry if necessary, and exports any corrected values of
-``TERM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` environment variables.
+``TERM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` (`termcap(5)`_)
+environment variables.
 
 Problem
 -------
@@ -168,21 +169,20 @@ Architecture
 Terminal identification
 -----------------------
 
-When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* asks the terminal to name itself.
-It reads an ``XTVERSION`` reply (``CSI > q``, answered ``DCS > | name version ST``); if that is
-silent it sends ``ENQ`` (``0x05``) and takes the printable answerback, for example
-``Extraterm 0.81.4``, whose trailing token holding a digit becomes ``TERM_PROGRAM_VERSION``.
-urxvt's default answerback is its DA response, ``ESC [ ? 1 ; 2 c``; *ttyscan* maps that answerback
-to urxvt. Some terminals answer after the CPR fence, so *ttyscan* reads a further 50ms before
-giving up.
+When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to identify it:
 
-If both are silent it measures: it sends DA1 (``CSI c``), which replies with a service class and a
-set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. DA1 extensions are unordered, so the
-table compares them as a set. For terminals sharing that DA1, *ttyscan* draws grapheme clusters
-whose measured column widths differ between terminals, narrowing the candidates until one remains.
-Only an exact match against the generated table is exported from the measurement, and an ambiguous
-measurement exports nothing. A terminal that normally identifies itself is in the table only when a
-probe separates it from every measured terminal that shares its DA1.
+- using ``XTVERSION`` and reply (``CSI > q``, answered ``DCS > | name version ST``)
+- using ``ENQ`` (``0x05``) and takes the printable answerback
+
+If both are silent it sends DA1 (``CSI c``), which all terminals reply with a service class and a
+set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
+*ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
+
+For example, Apple Terminal does not answer XTVERSION or ENQ, and ``ssh`` forwards ``TERM``, it does
+not forward ``TERM_PROGRAM``, making the terminal unidentifiable. Further, its DA1 reply, ``CSI ? 1
+; 2 c``, is not unique, matching several table entries. It is then identified by its unicode quirks,
+like that it draws the detective emoji, ``U+1F575 U+1F3FF U+200D U+2642 U+FE0F`` as five columns
+instead of 2. These "quiz tables" are generated automatically from data collected by ucs-detect_.
 
 The table and its probes are embedded in ttyscan.py_, generated from ucs-detect_'s collected data by
 ``tox -e update``.
