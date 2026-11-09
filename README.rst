@@ -5,7 +5,8 @@ ttyscan
 
 *ttyscan* queries a terminal emulator for its type, size and capabilities, creating a
 curses-compatible `terminfo(5)`_ file entry if necessary, and exports any corrected values of
-``TERM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` environment variables.
+``TERM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` (`termcap(5)`_)
+environment variables.
 
 Problem
 -------
@@ -30,10 +31,6 @@ All kinds of errors and warnings may be raised until this is done, some examples
        Traceback (most recent call last):
          File "<string>", line 1, in <module>
        _curses.error: setupterm: could not find terminal
-
-       $ git log -p
-       WARNING: terminal is not fully functional
-       Press RETURN to continue 
 
 Solution
 --------
@@ -70,7 +67,7 @@ CLI Arguments
 
 ::
 
-    usage: ttyscan [-h] [-v] [-f] [-t]
+    usage: ttyscan [-h] [-v] [-f] [-t] [--version]
 
     Export terminal capabilities discovered via XTGETTCAP
 
@@ -83,12 +80,9 @@ CLI Arguments
 
 *ttyscan* saves a `terminfo(5)`_ file to $XDG_CONFIG_HOME/ttyscan/terminfo or
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
-previous executions, unless ``--force`` argument is used.
+previous executions, unless ``--force`` is used.
 
-Typical total execution time is under 200ms.  Every query uses a following cursor position report
-(CPR) sequence to test for negative response (no support), so the timeout elapses for terminal
-automation (such as tcl/expect pexpect) that acts as a terminal but is not one. The default timeout
-is set by environment value, ``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in second.
+Typical total execution time is under 200ms.
 
 Installation
 ------------
@@ -115,8 +109,6 @@ sometimes minor corruption of screen output, missed interpretation of keyboard i
 backspace or delete, or a small reduction of features such as italic or underlined text or number of
 colors.
 
-**And so this tool is not often needed** except for the **very serious** terminal connoisseur.
-
 It serves as a demonstration: that a full terminal capability database *can* be transferred using
 XTGETTCAP_ for many modern terminals.  My hope is that ncurses_ and `setupterm(3)`_ could negotiate
 with full XTGETTCAP_ support at some point in the future, and that this utility is not commonly used
@@ -125,18 +117,18 @@ or required!
 Scope
 -----
 
-At time of this writing (May 2026), the ucs-detect_ dataset of 42 terminals shows three categories
-of support for ``XTGETTCAP``:
+At time of this writing (November 2026), the ucs-detect_ dataset of 42 terminals shows three
+categories of support for ``XTGETTCAP``:
 
-- **Full** ``XTGETTCAP`` capability support: contour_, foot_, ghostty_, kitty_, rio_, and wezterm_
-  transmit their complete terminfo boolean, numeric, and string capabilities via XTGETTCAP_.
+- **Full** ``XTGETTCAP`` capability support: AbsoluteTelnet/SSH, Bobcat, contour_, foot_, ghostty_,
+  iTerm2, kitty_, rio_, WezTerm_, and XTerm.NET transmit their complete terminfo boolean, numeric,
+  and string capabilities via XTGETTCAP_.
 
   *ttyscan* produces terminfo files for only these terminals.  *ttyscan* may also discover a
   preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
 
-- **Partial** ``XTGETTCAP`` capability support: XTerm_, iterm2, mlterm, AbsoluteTelnet/SSH, GNOME
-  Terminal, LXTerminal, terminator, termit, and xfce4-terminal report only ``TN``, ``Co``, and
-  ``RGB``.
+- **Partial** ``XTGETTCAP`` capability support: GNOME Terminal, mlterm, TeraTerm, Terminator, XFCE
+  Terminal, and XTerm_ report only ``TN``, ``Co``, and ``RGB``.
 
   *ttyscan* may only discover preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from
   ``RGB``.
@@ -146,18 +138,19 @@ of support for ``XTGETTCAP``:
   ``TERM=xterm-256color`` and ``TERM=xterm`` are the most ubiquitous terminal name, you should be
   just fine.
 
-- **No Support**: alacritty (refuses: `alacritty/vte#98`_), bobcat, cmd.exe, 
-  Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux fbdev, mintty, 
-  rxvt-unicode, screen, securecrt, st, Tabby, Terminal.exe (planned:
-  `microsoft/terminal#17735`_), terminology, tmux (passthrough: `tmux/tmux#3755`_), libvterm, VS
-  Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), weston-terminal, and zutty.
+- **No Support**: alacritty (refuses: `alacritty/vte#98`_), Extraterm, Hyper, Konsole (requested:
+  `KDE#507017`_), libvterm, linux fbdev, mintty, pterm, QTerminal, rxvt-unicode, screen, securecrt,
+  st, SyncTERM, Tabby, Terminal.exe (planned: `microsoft/terminal#17735`_), terminology, tmux
+  (passthrough: `tmux/tmux#3755`_), VS Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), Warp,
+  weston-terminal, Zellij, and zutty.
 
-- **Non-Compliant**: ConEmu, cool-retro-term, Apple Terminal, PuTTY, QTerminal: When a terminal emulator
-  does not support XTGETTCAP, it **should** silently consume VT100 Mode DCS queries without answer.
+- **Non-Compliant**: ConEmu, cool-retro-term, and Apple Terminal: When a terminal emulator does not
+  support XTGETTCAP, it **should** silently consume VT100 Mode DCS queries without answer. QTerminal
+  (`fixed upstream <https://github.com/lxqt/qtermwidget/pull/644>`_) and PuTTY now ignore the query.
 
-  However, some non-compliant terminals display XTGETTCAP query output, eg. ``+q544e+q524742+q636f6c6f7273+q626c696e6b+..``
-  visually: QTerminal, cool-retro-term, and qtermwidget (`fixed upstream <https://github.com/lxqt/qtermwidget/pull/644>`_), 
-  PuTTY, ConEmu.exe, and Apple's Terminal.app all fail to parse DCS queries, displaying raw sequence output.
+  However, these terminals display XTGETTCAP query output, eg.
+  ``+q544e+q524742+q636f6c6f7273+q626c696e6b+..`` visually: cool-retro-term, ConEmu.exe, and
+  Apple's Terminal.app fail to parse DCS queries, displaying raw sequence output.
 
 Architecture
 ------------
@@ -173,6 +166,25 @@ Architecture
 - DECRQSS_ (Request Setting Selection) to probe truecolor support when ``RGB`` is unavailable,
   by setting and querying a 24-bit background color
 
+Terminal identification
+-----------------------
+
+When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to identify it:
+
+- using ``XTVERSION`` and reply (``CSI > q``, answered ``DCS > | name version ST``)
+- using ``ENQ`` (``0x05``) and takes the printable answerback
+
+If both are silent it sends DA1 (``CSI c``), which all terminals reply with a service class and a
+set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
+*ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
+
+For example, Apple's Terminal.app may be remotely identified even though it does not answer
+``XTVERSION`` or ``ENQ``, although it does export ``TERM_PROGRAM``, ssh does not forward it.
+Further, its DA1 reply is not unique, and so it is identified only by its unicode "quirks".
+
+These "quiz tables" are generated automatically from data collected by ucs-detect_, by
+command ``tox -e update``. 
+
 Details
 -------
 
@@ -180,19 +192,19 @@ The difference of *Full* and *Partial* ``XTGETTCAP`` support is best described b
 
   ``XTGETTCAP`` is an escape sequence initially introduced by XTerm_, and also implemented (and extended,
   to some degree) by Kitty.
- 
+
   Applications using this feature do not need to use the classic, file-based, terminfo definition.
- 
+
   XTerm's implementation (as of XTerm-370) only supports querying key (as in keyboard keys)
   capabilities, and three custom capabilities:
-  
+
   ``TN`` - terminal name
   ``Co`` - number of colors (alias for the colors capability)
   ``RGB`` - number of bits per color channel (different semantics from the RGB capability in file-based
   terminfo definitions!).
- 
+
   Kitty has extended this, and also supports querying all integer and string capabilities.
- 
+
   Foot supports this, and extends it even further, to also include boolean capabilities.
   This means foot's entire terminfo can be queried via ``XTGETTCAP``.
 
@@ -204,10 +216,15 @@ software or protocols, some examples:
 - serial does not forward any; ``TERM`` is defined by host `agetty(8)`_ configuration, for example.
 - rlogin can forward all but ``COLORTERM``.
 - telnet can forward all, but IAC NAWS and NEW-ENVIRON capability varies by software.
-- websocket cannot forward any without customization, often used in-browser.
+- websocket cannot forward any (without customized subprotocol), often used in web browsers.
 
 *ttyscan* detects when these variables are unset or do not match values and re-exports the corrected
 values when they differ.
+
+Every query uses a following cursor position report (CPR) sequence to test for negative response
+(no support), so the timeout elapses for terminal automation (such as tcl/expect pexpect) that acts
+as a terminal but is not one. The default timeout is set by environment value,
+``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in second.
 
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
