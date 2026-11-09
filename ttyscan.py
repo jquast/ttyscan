@@ -59,6 +59,8 @@ except ValueError:
          f"is not a valid float, using default 10.0")
     _TTYSCAN_QUERY_TIMEOUT = 10.0
 
+_ENQ_SETTLE = 0.05
+
 _CANONICAL_BOOL_CAPS = (
     "AX bw am xsb xhp xenl eo gn hc km hs in da db mir msgr os eslok xt hz ul xon "
     "nxon mc5i chts nrrmc npc ndscr ccc bce hls xhpa crxm daisy xvpa sam cpix "
@@ -127,41 +129,46 @@ _SENTINEL_ABSENT = -1
 _MAX_INPUT = 131072
 
 # BEGIN GENERATED TERMINAL QUIZ: update-detect-table.py
-# ucs-detect data @ 1af1052, working tree modified: 40 runs, 13 terminals, 4 probes
+# ucs-detect data @ 2cb6c59: 40 runs, 15 terminals, 5 probes
 _TERM_PROBES = (
     '\U0001f575\U0001f3ff\u200d\u2642\ufe0f',
     '\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe',
+    '\U0001f1ff',
     '\u1c8a',
     '\u17d8',
 )
 
 _TERM_QUIZ = (
     (('?', 1, (2,)),
-     'Apple_Terminal', {0: 5, 1: 9}),
+     'Apple_Terminal', {0: 5, 1: 9, 2: 1, 3: 1, 4: 1}),
     (('?', 1, (2,)),
-     'ConEmu', {0: 6, 1: 9}),
+     'ConEmu', {0: 6, 1: 9, 2: 2}),
     (('?', 1, (2,)),
-     'Hyper', {0: 4, 1: 6}),
+     'Extraterm', {0: 6, 1: 9, 2: 1, 3: 1, 4: 1}),
     (('?', 1, (2,)),
-     'QTerminal', {0: 4, 1: 8, 2: 0, 3: 1}),
+     'Hyper', {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
     (('?', 1, (2,)),
-     'TeraTerm', {0: 1}),
+     'QTerminal', {0: 4, 1: 8, 2: 1, 3: 0, 4: 1}),
     (('?', 1, (2,)),
-     'cool-retro-term', {0: 4, 1: 8, 2: 1, 3: 1}),
+     'TeraTerm', {0: 1, 2: 1}),
+    (('?', 1, (2,)),
+     'cool-retro-term', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+    (('?', 1, (2,)),
+     'libvterm', {0: 11, 1: 14, 2: 2, 3: 1, 4: 1}),
     (('?', 6, ()),
-     'alacritty', {0: 4, 2: 1, 3: 2}),
+     'alacritty', {0: 4, 2: 1, 3: 1, 4: 2}),
     (('?', 6, ()),
-     'st', {0: 4, 1: 8, 2: 1, 3: 1}),
+     'st', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
     (('?', 6, ()),
-     'weston-terminal', {0: 6, 1: 9}),
+     'weston-terminal', {0: 6, 1: 9, 2: 1}),
     (('?', 61, (4, 6, 7, 14, 21, 22, 23, 24, 28, 32, 42, 52)),
-     'WindowsTerminal', {}),
+     'WindowsTerminal', {2: 1}),
     (('?', 62, (1, 2, 6, 7, 8, 9)),
-     'securecrt', {0: 4, 1: 6}),
+     'securecrt', {0: 4, 1: 6, 2: 1}),
     (('?', 62, (4, 9, 22)),
-     'Tabby', {0: 4, 1: 6, 2: 1, 3: 1}),
+     'Tabby', {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
     (('?', 64, (1, 9, 15, 21, 22)),
-     'zutty', {0: 4, 1: 8, 2: 1, 3: 1}),
+     'zutty', {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
 )
 # END GENERATED TERMINAL QUIZ
 
@@ -427,15 +434,20 @@ def enq_query(fd, timeout=_TTYSCAN_QUERY_TIMEOUT):
     termios.tcflush(fd, termios.TCIFLUSH)
     fence, data = read_until(fd, ['\x05'], timeout=timeout)
     answer = data[:fence.start()] + data[fence.end():]
+    answer += read_available(fd, _ENQ_SETTLE).decode('latin-1', errors='replace')
     write_all(fd, '\r\x1b[K')
+    if answer:
+        verbose(f"ENQ answer: {answer!r}")
     if _RE_RXVT_ANSWERBACK.search(answer):
         return 'urxvt', ''
     answer = _RE_CSI.sub('', answer)
     answer = _RE_OSC_RESPONSE.sub('', answer)
     match = re.search(r'\x1bP(.*?)(?:\x1b\\|\x9c)', answer, re.S)
     if match is not None:
-        answer = match.group(1)
+        plain = ''.join(ch for ch in answer[:match.start()] if ch.isprintable())
+        answer = plain.strip() or match.group(1)
     answer = ''.join(ch for ch in answer if ch.isprintable()).strip()
+    answer = answer.rstrip('\\').strip()
     if answer.startswith('>|'):
         answer = answer[2:].strip()
     if not answer or not answer[0].isalpha():

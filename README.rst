@@ -89,9 +89,11 @@ When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* asks the term
 It reads an ``XTVERSION`` reply; if that is silent it sends ``ENQ`` and takes the answerback; if both
 are silent it measures the DA1 reply and the grapheme cluster widths that the remaining candidates
 were actually measured on. Only an exact match against the generated table is exported from the
-measurement. A terminal that normally answers ENQ is not in the table. urxvt's default ENQ
-answerback is its DA response, ``ESC [ ? 1 ; 2 c``; *ttyscan* maps that answerback to urxvt. The
-table is generated from ucs-detect's collected data by ``tox -e update``.
+measurement. A terminal that normally identifies itself is in the table only when a probe
+separates it from every measured terminal that shares its DA1. urxvt's default ENQ answerback is
+its DA response, ``ESC [ ? 1 ; 2 c``; *ttyscan* maps that answerback to urxvt. Some terminals
+answer ENQ after the CPR fence, so *ttyscan* reads briefly past it before giving up. The table is
+generated from ucs-detect's collected data by ``tox -e update``.
 
 Typical total execution time is under 200ms.  Every query uses a following cursor position report
 (CPR) sequence to test for negative response (no support), so the timeout elapses for terminal

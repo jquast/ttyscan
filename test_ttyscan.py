@@ -1039,6 +1039,7 @@ def test_da1_query(reply, expected):
     ("\x1b[?1;2c", ('urxvt', '')),
     ("PuTTY", ('PuTTY', '')),
     ("\x1bP>|Extraterm 0.78\x1b\\", ('Extraterm', '0.78')),
+    ("Extraterm 0.81.4\\\x1bP>|Extraterm\x1b\\", ('Extraterm', '0.81.4')),
     ("\x1b]0;title\x07urxvt", ('urxvt', '')),
     ("   ", None),
     ("", None),
@@ -1048,6 +1049,7 @@ def test_enq_query(answer, expected):
     buf = answer + "\x1b[31;128R"
     fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan.read_available', return_value=b''), \
             patch('ttyscan.write_all'):
         assert enq_query(3) == expected
 
@@ -1057,8 +1059,19 @@ def test_enq_query_accepts_an_answer_after_the_cpr():
     buf = "\x1b[31;128R" + "urxvt 9.31"
     fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan.read_available', return_value=b''), \
             patch('ttyscan.write_all'):
         assert enq_query(3) == ('urxvt', '9.31')
+
+
+def test_enq_query_accepts_an_answer_after_the_read():
+    """An answerback that arrives after the fenced read is still collected."""
+    buf = "\x1b[31;128R"
+    fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
+    with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan.read_available', return_value=b"Extraterm 0.81.4"), \
+            patch('ttyscan.write_all'):
+        assert enq_query(3) == ('Extraterm', '0.81.4')
 
 
 @pytest.mark.parametrize("answer", [
@@ -1072,6 +1085,7 @@ def test_enq_query_ignores_stray_replies(answer):
     buf = "\x1b[31;128R" + answer
     fence = re.search(r"\x1b\[[0-9]+;[0-9]+R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)), \
+            patch('ttyscan.read_available', return_value=b''), \
             patch('ttyscan.write_all'):
         assert enq_query(3) is None
 
@@ -1156,6 +1170,18 @@ def test_detect_terminal_every_row(da1, name, widths):
     else:
         assert name in expected
         assert result is None
+
+
+def test_detect_terminal_splits_conemu_from_extraterm():
+    """A standalone regional indicator is what separates ConEmu from Extraterm."""
+    widths = {0: 6, 1: 9, 2: 1}
+
+    def fake_width(fd, probe, timeout):
+        return widths[_TERM_PROBES.index(probe)]
+
+    with patch('ttyscan.da1_query', return_value=('?', 1, (2,))), \
+            patch('ttyscan.probe_width', side_effect=fake_width):
+        assert detect_terminal(3) == 'Extraterm'
 
 
 @pytest.mark.parametrize("da1,widths", [
@@ -1297,6 +1323,8 @@ def _fake_data_dir(tmp_path):
         'NARROW_CHARACTERS = (("18.0.0", (0x17D8,)),)\n')
     (package / "table_zwj.py").write_text(
         'EMOJI_ZWJ_SEQUENCES = (("18.0.0", ("PROBE-A", "PROBE-B")),)\n')
+    (package / "table_sri.py").write_text(
+        'STANDALONE_REGIONAL_INDICATORS = (("18.0.0", (0x1F1FF,)),)\n')
     return data_dir
 
 
@@ -1369,7 +1397,7 @@ def test_generator_load_width_table_rejects_missing_file(tmp_path):
         generator.load_width_table(tmp_path, "table_narrow", "NARROW_CHARACTERS")
 
 
-def test_generator_build_rows_skips_other_versions_and_named_terminals(tmp_path):
+def test_generator_build_rows_drops_old_versions_and_unresolvable_terminals(tmp_path):
     generator = _load_generator()
     data_dir = _fake_data_dir(tmp_path)
     runs = [
@@ -1414,6 +1442,46 @@ def test_generator_build_rows_keeps_only_tested_probes(tmp_path):
     rows, _skipped, _expected = generator.build_rows(runs, data_dir)
     assert rows[0]["values"] == {"PROBE-A": 8}
     assert rows[1]["values"] == {"PROBE-A": 8, "PROBE-B": 5}
+
+
+def test_generator_build_rows_reads_a_tested_sri_probe(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    measured = _fake_run("Measured", "\x1b[?1;2c", {"PROBE-A": 2})
+    measured["test_results"]["sri_results"] = {"18.0.0": {
+        "n_total": 1, "failed_codepoints": [
+            {"wchar": "\\U0001f1ff", "measured_by_terminal": 1,
+             "measured_by_wcwidth": 2}]}}
+    tested = _fake_run("Tested", "\x1b[?1;2c", {"PROBE-A": 2})
+    tested["test_results"]["sri_results"] = {"18.0.0": {
+        "n_total": 1, "failed_codepoints": []}}
+    rows, _skipped, _expected = generator.build_rows([measured, tested], data_dir)
+    values = {row["name"]: row["values"] for row in rows}
+    assert values["Measured"]["\U0001f1ff"] == 1
+    assert values["Tested"]["\U0001f1ff"] == 2
+
+
+def test_generator_build_rows_keeps_a_separable_shadow(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [
+        _fake_run("Primary", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 2}),
+        _fake_run("Shadow", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 5},
+                  method="ENQ"),
+    ]
+    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    assert [row["name"] for row in rows] == ["Primary", "Shadow"]
+
+
+def test_generator_build_rows_drops_an_unresolvable_shadow(tmp_path):
+    generator = _load_generator()
+    data_dir = _fake_data_dir(tmp_path)
+    runs = [
+        _fake_run("Primary", "\x1b[?1;2c", {"PROBE-A": 2}),
+        _fake_run("Shadow", "\x1b[?1;2c", {"PROBE-A": 2}, method="ENQ"),
+    ]
+    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    assert [row["name"] for row in rows] == ["Primary"]
 
 
 def test_generator_usable_probe():

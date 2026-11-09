@@ -17,7 +17,11 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("update-detect-table: PyYAML is required")
 
-CATEGORIES = ("narrow_results", "emoji_zwj_results")
+CATEGORIES = (
+    ("narrow_results", "table_narrow", "NARROW_CHARACTERS"),
+    ("emoji_zwj_results", "table_zwj", "EMOJI_ZWJ_SEQUENCES"),
+    ("sri_results", "table_sri", "STANDALONE_REGIONAL_INDICATORS"),
+)
 
 # Multiplexers can relay host DA1 and widths, and so are unreliable for this purpose
 EXCLUDE = frozenset({"GNU Screen", "tmux", "Zellij"})
@@ -108,7 +112,7 @@ def build_rows(runs, data_dir):
     for run in usable:
         name = run["software_name"]
         version = run.get("wcwidth_version")
-        for category_name in CATEGORIES:
+        for category_name, _module, _variable in CATEGORIES:
             for body in ((run.get("test_results") or {}).get(category_name) or {}).values():
                 total[(name, category_name)] = max(
                     total[(name, category_name)], (body or {}).get("n_total") or 0)
@@ -124,20 +128,19 @@ def build_rows(runs, data_dir):
                             % (grapheme, version, width,
                                record["measured_by_wcwidth"]))
 
-    narrow = load_width_table(data_dir, "table_narrow", "NARROW_CHARACTERS")
-    zwj = load_width_table(data_dir, "table_zwj", "EMOJI_ZWJ_SEQUENCES")
-    narrow_rank = {codepoint: index for index, codepoint in enumerate(narrow)}
-    zwj_rank = {grapheme: index for index, grapheme in enumerate(zwj)}
+    width_ranks = {}
+    for category_name, module, variable in CATEGORIES:
+        table = load_width_table(data_dir, module, variable)
+        width_ranks[category_name] = {
+            (chr(entry) if isinstance(entry, int) else entry): index
+            for index, entry in enumerate(table)
+        }
 
     def measured_width(name, grapheme, version):
         if (name, grapheme) in failed:
             return failed[(name, grapheme)]
         kind = category.get(grapheme)
-        rank = None
-        if kind == "narrow_results" and len(grapheme) == 1:
-            rank = narrow_rank.get(ord(grapheme))
-        elif kind == "emoji_zwj_results":
-            rank = zwj_rank.get(grapheme)
+        rank = width_ranks.get(kind, {}).get(grapheme)
         if rank is None or rank >= total.get((name, kind), 0):
             return None
         return expected.get((version, grapheme))
@@ -148,8 +151,6 @@ def build_rows(runs, data_dir):
         name = run["software_name"]
         if name in EXCLUDE:
             print("excluding %s" % name, file=sys.stderr)
-            continue
-        if results.get("software_method") in ("XTVERSION", "ENQ") or unique_tn(run):
             continue
         version = run.get("wcwidth_version")
         values = {}
@@ -163,10 +164,12 @@ def build_rows(runs, data_dir):
             "name": name,
             "da1": parse_da1((results.get("device_attributes") or {}).get("raw") or ""),
             "values": values,
+            "primary": not (results.get("software_method") in ("XTVERSION", "ENQ")
+                            or unique_tn(run)),
         })
     if len({row["name"] for row in rows}) != len(rows):
         raise SystemExit("update-detect-table: duplicate terminal name")
-    return rows, skipped, expected
+    return prune_shadows(rows), skipped, expected
 
 
 def usable_probe(grapheme):
@@ -217,6 +220,29 @@ def choose_probes(rows):
         done = set(covered)
         remaining = [pair for pair in remaining if pair not in done]
     return order, unseparated
+
+
+def prune_shadows(rows):
+    """Drop rows that only make a measurable terminal ambiguous.
+
+    A terminal that normally identifies itself is useful in the quiz only when
+    probes separate it from every measurable terminal that shares its DA1.
+    """
+    groups = {row["da1"] for row in rows if row["primary"]}
+    selected = [row for row in rows
+                if row["primary"] or row["da1"] in groups]
+    while True:
+        _probes, unseparated = choose_probes(selected)
+        by_name = {row["name"]: row for row in selected}
+        drop = set()
+        for first, second in unseparated:
+            pair = ((first, by_name[first]), (second, by_name[second]))
+            if all(row["primary"] for _name, row in pair):
+                continue
+            drop.update(name for name, row in pair if not row["primary"])
+        if not drop:
+            return selected
+        selected = [row for row in selected if row["name"] not in drop]
 
 
 def source_note(data_dir, runs, probe_count, terminal_count):
