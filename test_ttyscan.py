@@ -10,6 +10,8 @@ from unittest.mock import call, patch
 
 import pytest
 
+import ttyscan
+
 from ttyscan import (
     build_termcap_entry,
     build_terminfo_binary,
@@ -37,12 +39,12 @@ from ttyscan import (
     warn,
     NoCPRReply,
     xtversion_query,
-    _TERM_PROBES,
-    _TERM_QUIZ,
+    TERM_PROBES,
+    TERM_QUIZ,
 )
 
 
-def _split_replies(response):
+def split_replies(response):
     """Split canned replies into one segment per cursor position fence."""
     import re
     segments = []
@@ -55,21 +57,18 @@ def _split_replies(response):
     return segments
 
 
-def _pty_run(args, env, response, timeout=5.0):
+def pty_run(args, env, response, timeout=5.0):
     """Run a command in a PTY child, writing each canned segment at its fence.
 
     Returns ``(output_text, wait_status)``.
     """
-    return _pty_run_staggered(
-        args, env, [(0.0, segment) for segment in _split_replies(response)],
+    return pty_run_staggered(
+        args, env, [(0.0, segment) for segment in split_replies(response)],
         timeout=timeout)
 
 
-def _pty_run_staggered(args, env, responses, timeout=5.0):
-    """Run a command in a PTY child, answering fence k with ``responses[k]``.
-
-    Each entry is ``(delay_sec, data)``.  Returns ``(output_text, wait_status)``.
-    """
+def pty_run_staggered(args, env, responses, timeout=5.0):
+    """Run *args* in a PTY child, sending each ``(delay, data)`` reply at its fence."""
     import fcntl
     import select
     import struct
@@ -113,12 +112,11 @@ def _pty_run_staggered(args, env, responses, timeout=5.0):
 
 def test_xtgettcap_query_counts_replies():
     """The reply count separates a short batch from a selective terminal."""
-    import re as _re
-    from ttyscan import xtgettcap_query, _RE_CPR_BOUNDARY
+    from ttyscan import xtgettcap_query, RE_CPR_BOUNDARY
 
     first = ("\x1bP1+r544e=787465726d\x1b\\\x1bP0+r636f6c6f7273\x1b\\"
              + "\x1b[31;128R")
-    fence = _re.search(_RE_CPR_BOUNDARY, first)
+    fence = re.search(RE_CPR_BOUNDARY, first)
 
     with patch('ttyscan.read_until', return_value=(fence, first)), \
             patch('ttyscan.write_all'):
@@ -339,11 +337,10 @@ def test_xtversion_query_no_cpr():
     ("\x1bP>|foot\x1b\\", "foot", ""),
 ])
 def test_xtversion_query_parsed(data, expected_name, expected_version):
-    import re as _re_mod
-    from ttyscan import _RE_CPR_BOUNDARY
+    from ttyscan import RE_CPR_BOUNDARY
 
     full_buf = data + "\x1b[31;128R"
-    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, full_buf)
+    cpr_match = re.search(RE_CPR_BOUNDARY, full_buf)
     read_until_return = (cpr_match, full_buf)
     with patch('ttyscan.read_until', return_value=read_until_return):
         result = xtversion_query(3, 0.25)
@@ -352,11 +349,10 @@ def test_xtversion_query_parsed(data, expected_name, expected_version):
 
 def test_xtversion_query_no_dcs():
     """A fence with no DCS reply in front of it yields ``None``."""
-    import re as _re_mod
-    from ttyscan import _RE_CPR_BOUNDARY
+    from ttyscan import RE_CPR_BOUNDARY
 
     full_buf = "\x1b[31;128R"
-    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, full_buf)
+    cpr_match = re.search(RE_CPR_BOUNDARY, full_buf)
     read_until_return = (cpr_match, full_buf)
     with patch('ttyscan.read_until', return_value=read_until_return):
         result = xtversion_query(3, 0.25)
@@ -376,7 +372,7 @@ def test_warn():
 ])
 def test_verbose(enabled, expected):
     buf = io.StringIO()
-    with patch.object(sys, "stderr", buf), patch("ttyscan._VERBOSE", enabled):
+    with patch.object(sys, "stderr", buf), patch("ttyscan.VERBOSE", enabled):
         verbose("test message")
     if expected:
         assert expected in buf.getvalue()
@@ -413,10 +409,9 @@ def test_ttyscan_terminfo_dir(env, expected_prefix):
      "2"),
 ])
 def test_decqss_query_valid(setting_id, buf, expected):
-    import re as _re_mod
-    from ttyscan import _RE_CPR_BOUNDARY
+    from ttyscan import RE_CPR_BOUNDARY
 
-    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, buf)
+    cpr_match = re.search(RE_CPR_BOUNDARY, buf)
     with patch('ttyscan.read_until', return_value=(cpr_match, buf)):
         assert decqss_query(3, setting_id, 0.25) == expected
 
@@ -427,10 +422,9 @@ def test_decqss_query_valid(setting_id, buf, expected):
 ])
 def test_decqss_query_invalid(buf):
     """A refusal or a bare fence yields ``None``."""
-    import re as _re_mod
-    from ttyscan import _RE_CPR_BOUNDARY
+    from ttyscan import RE_CPR_BOUNDARY
 
-    cpr_match = _re_mod.search(_RE_CPR_BOUNDARY, buf)
+    cpr_match = re.search(RE_CPR_BOUNDARY, buf)
     with patch('ttyscan.read_until', return_value=(cpr_match, buf)):
         assert decqss_query(3, 'm', 0.25) is None
 
@@ -468,16 +462,40 @@ def test_main_help():
     ["-t"],
 ])
 def test_main_flags(args):
-    from ttyscan import main, generate_exports  # noqa: F401
+    from ttyscan import main, parse_args
     buf = io.StringIO()
-    with patch.object(sys, "stdout", buf), \
-            patch("ttyscan.generate_exports", return_value=[]):
-        main(args)
+    with patch("ttyscan.VERBOSE", False), \
+            patch.object(sys, "stdout", buf), \
+            patch("ttyscan.generate_exports", return_value=[]) as mock_exports:
+        options = parse_args(args)
+        main(**options)
     assert isinstance(buf.getvalue(), str)
+    mock_exports.assert_called_once_with(options["force"], options["termcap"])
+
+
+def test_cli_parses_and_calls_main():
+    """The console entry point parses options and calls main()."""
+    from ttyscan import cli
+    options = {"force": True, "termcap": False}
+    with patch("ttyscan.parse_args", return_value=options) as mock_parse, \
+            patch("ttyscan.main") as mock_main:
+        cli()
+    mock_parse.assert_called_once_with()
+    mock_main.assert_called_once_with(**options)
+
+
+def test_parse_args_returns_options_and_sets_verbose():
+    """Parsing consumes --verbose into the module flag and returns the rest."""
+    from ttyscan import parse_args
+    with patch("ttyscan.VERBOSE", False):
+        options = parse_args(["-v", "-f", "-t"])
+        assert ttyscan.VERBOSE is True
+    assert options == {"force": True, "termcap": True}
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 def test_main_subprocess():
+    """The module runs as a subprocess and exports the discovered TERM."""
     env = {
         **dict(os.environ),
         "TTYSCAN_QUERY_TIMEOUT": "0.25",
@@ -486,15 +504,15 @@ def test_main_subprocess():
     env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
-    response = _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] + _CPR_31_128 \
-        + _XT_RESP["xtversion_kitty"] + _CPR_5_10 \
-        + _CPR_6_7 \
-        + _DECRPM_none + _CPR_5_10 \
-        + _CPR_999_999 \
-        + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"] \
-        + _CPR_31_128
+    response = XT_RESP["tn_xterm"] + XT_RESP["colors_256"] + CPR_31_128 \
+        + XT_RESP["xtversion_kitty"] + CPR_5_10 \
+        + CPR_6_7 \
+        + DECRPM_none + CPR_5_10 \
+        + CPR_999_999 \
+        + XT_RESP["colors_256"] + XT_RESP["clear"] + XT_RESP["am"] \
+        + CPR_31_128
 
-    text, status = _pty_run(
+    text, status = pty_run(
         [sys.executable, "-m", "ttyscan", "-f"],
         env, response)
 
@@ -508,7 +526,7 @@ def test_ttyscan_query_timeout_bad_value():
     result = subprocess.run(
         [sys.executable, "-c",
          "import os; os.environ['TTYSCAN_QUERY_TIMEOUT'] = 'bad'; "
-         "import ttyscan; print(ttyscan._TTYSCAN_QUERY_TIMEOUT)"],
+         "import ttyscan; print(ttyscan.TTYSCAN_QUERY_TIMEOUT)"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
     )
     assert result.stdout.strip() == "10.0"
@@ -530,17 +548,64 @@ def test_has_terminfo(term, expected):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="start_new_session requires unix")
-@pytest.mark.parametrize("verbose_arg", ["", "True"])
-def test_generate_exports_no_tty(verbose_arg):
-    verbose = f"verbose_enabled={verbose_arg}" if verbose_arg else ""
-    code = f"import ttyscan; print(ttyscan.generate_exports({verbose}))"
+def test_generate_exports_no_tty():
+    """No controlling terminal yields no exports."""
     result = subprocess.run(
-        [sys.executable, "-c", code],
+        [sys.executable, "-c",
+         "import ttyscan; print(ttyscan.generate_exports())"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
     assert result.stdout.strip() == "[]"
+
+
+def test_generate_exports_without_a_tty():
+    """No tty descriptor yields no exports."""
+    from ttyscan import generate_exports
+    with patch('ttyscan.open_tty', return_value=None), \
+            patch('ttyscan.verbose') as mock_verbose:
+        assert generate_exports() == []
+    mock_verbose.assert_called_with("no terminal available")
+
+
+def test_detected_size_exports_rejects_a_small_cpr():
+    """A CPR size smaller than the tty size is rejected."""
+    from ttyscan import detected_size_exports
+    with patch('ttyscan.detect_size', return_value=(10, 20, 'cpr')), \
+            patch('ttyscan.verbose') as mock_verbose:
+        assert detected_size_exports(3, (80, 24), False) == []
+    mock_verbose.assert_called_with(
+        "rejecting CPR size 10x20 (term reports 24x80)")
+
+
+@pytest.mark.parametrize("system_ti,message", [
+    (True, "terminfo already available in system database"),
+    (False, "terminfo exists at {path}"),
+])
+def test_install_terminfo_reports_an_existing_entry(system_ti, message, tmp_path):
+    """An existing system or local entry is not rewritten."""
+    from ttyscan import install_terminfo
+    path = tmp_path / "xterm"
+    path.write_bytes(b"x")
+    classified = {"str_caps": {}, "num_caps": {}, "bool_caps": {}}
+    with patch('ttyscan.verbose') as mock_verbose:
+        install_terminfo(False, "xterm", (tmp_path, path, system_ti), classified)
+    mock_verbose.assert_called_with(message.format(path=path))
+
+
+def test_termcap_exports_skips_an_unchanged_entry():
+    """An unchanged TERMCAP value is not exported."""
+    from ttyscan import termcap_exports
+    classified = {
+        "str_caps": {"clear": "\x1b[H\x1b[2J"},
+        "num_caps": {"colors": 256},
+        "bool_caps": {"am"},
+    }
+    entry = build_termcap_entry("xterm", classified["str_caps"],
+                                classified["num_caps"], classified["bool_caps"])
+    with patch.dict(os.environ, {"TERMCAP": entry}):
+        assert termcap_exports(False, "xterm", classified) == []
 
 
 def test_get_winsize_non_tty():
@@ -574,12 +639,12 @@ def test_write_all_none_fd():
     (None, None, None, None),
 ])
 def test_detect_size(decrpm, resize_report, cpr, expected):
-    from ttyscan import detect_size, _RE_CPR, _TTYSCAN_QUERY_TIMEOUT
-    import re as _re
+    """Size comes from in-band resize or a cursor position report."""
+    from ttyscan import detect_size, RE_CPR, TTYSCAN_QUERY_TIMEOUT
 
     data = (resize_report or "") + "\x1b[31;128R"
-    fenced = (_re.search(_RE_CPR, data), data)
-    bare = (_re.search(_RE_CPR, "\x1b[31;128R"), "\x1b[31;128R")
+    fenced = (re.search(RE_CPR, data), data)
+    bare = (re.search(RE_CPR, "\x1b[31;128R"), "\x1b[31;128R")
     returns = [fenced, bare] if decrpm == 2 else []
 
     with patch('ttyscan.decrqm_query', return_value=decrpm), \
@@ -592,14 +657,14 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
     assert result == expected
     if expected == (31, 128, 'inband'):
         assert mock_read_until.call_args_list == [
-            call(3, ['\x1b[?2048h'], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT),
-            call(3, [], _RE_CPR.pattern, _TTYSCAN_QUERY_TIMEOUT),
+            call(3, ['\x1b[?2048h'], RE_CPR.pattern, TTYSCAN_QUERY_TIMEOUT),
+            call(3, [], RE_CPR.pattern, TTYSCAN_QUERY_TIMEOUT),
         ]
         mock_read_cpr.assert_not_called()
         mock_write_all.assert_called_once_with(3, '\x1b[?2048l')
     else:
         mock_read_cpr.assert_called_once_with(
-            3, _TTYSCAN_QUERY_TIMEOUT, minimum=(128, 31))
+            3, TTYSCAN_QUERY_TIMEOUT, minimum=(128, 31))
         mock_write_all.assert_any_call(3, '\x1b7\x1b[1000;1000H')
         mock_write_all.assert_any_call(3, '\x1b8')
         if decrpm != 2:
@@ -613,16 +678,15 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
 ])
 def test_detect_size_uses_the_last_inband_report(late, expected):
     """Resize reports emitted before the mode reset arrive ahead of the fence."""
-    from ttyscan import detect_size, _RE_CPR
-    import re as _re
+    from ttyscan import detect_size, RE_CPR
 
     early = "\x1b[48;31;128;0;0t\x1b[31;128R"
     tail = late + "\x1b[31;128R"
 
     with patch('ttyscan.decrqm_query', return_value=2), \
             patch('ttyscan.read_until', side_effect=[
-                (_re.search(_RE_CPR, early), early),
-                (_re.search(_RE_CPR, tail), tail),
+                (re.search(RE_CPR, early), early),
+                (re.search(RE_CPR, tail), tail),
             ]), \
             patch('ttyscan.write_all'), \
             patch('ttyscan.verbose'):
@@ -668,7 +732,7 @@ def test_read_until_no_fence_in_flood():
 
 
 # Canned XTGETTCAP responses for PTY tests.
-_XT_RESP = {
+XT_RESP = {
     "tn_xterm": b"\x1bP1+r544e=787465726d\x1b\\",
     "tn_nonexist": b"\x1bP1+r544e=6e6f6e6578697374\x1b\\",
     "colors_256": b"\x1bP1+r636f6c6f7273=323536\x1b\\",
@@ -679,117 +743,118 @@ _XT_RESP = {
     "rgb_8_8_8": b"\x1bP1+r524742=382f382f38\x1b\\",
     "xtversion_kitty": b"\x1bP>|kitty(0.24.2)\x1b\\",
 }
-_CPR_31_128 = b"\x1b[31;128R"
-_CPR_5_10 = b"\x1b[5;10R"
-_CPR_6_7 = b"\x1b[6;7R"
-_CPR_999_999 = b"\x1b[999;999R"
-_DECRPM_none = b"\x1b[?2048;1$y"
-_DECRPM_set = b"\x1b[?2048;2$y"
-_RESIZE_31_128 = b"\x1b[48;31;128;0;0t"
-_DECRQSS_SGR_ORIGINAL = b"\x1bP1$r0m\x1b\\"
-_DECRQSS_SGR_TRUECOLOR = b"\x1bP1$r48:2:1:2:3m\x1b\\"
-_DECRQSS_SGR_PALETTE = b"\x1bP1$r40m\x1b\\"
-_DECRQSS_SGR_INVALID = b"\x1bP0$r\x1b\\"
-_XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
+CPR_31_128 = b"\x1b[31;128R"
+CPR_5_10 = b"\x1b[5;10R"
+CPR_6_7 = b"\x1b[6;7R"
+CPR_999_999 = b"\x1b[999;999R"
+DECRPM_none = b"\x1b[?2048;1$y"
+DECRPM_set = b"\x1b[?2048;2$y"
+RESIZE_31_128 = b"\x1b[48;31;128;0;0t"
+DECRQSS_SGR_ORIGINAL = b"\x1bP1$r0m\x1b\\"
+DECRQSS_SGR_TRUECOLOR = b"\x1bP1$r48:2:1:2:3m\x1b\\"
+DECRQSS_SGR_PALETTE = b"\x1bP1$r40m\x1b\\"
+DECRQSS_SGR_INVALID = b"\x1bP0$r\x1b\\"
+XTVERSION_XTERM = b"\x1bP>|XTerm(367)\x1b\\"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 @pytest.mark.parametrize("flags,response,expected,not_expected", [
     ("-vft",
-     _XT_RESP["tn_xterm"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999
-     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
-     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     XT_RESP["tn_xterm"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999
+     + XT_RESP["colors_256"] + XT_RESP["clear"] + XT_RESP["am"]
+     + XT_RESP["cols_80"] + XT_RESP["lines_24"] + CPR_31_128,
      ["export TERM=xterm", "export TERMINFO=", "export TERMCAP="],
      []),
     ("-vft",
-     _XT_RESP["tn_xterm"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999
-     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
-     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     XT_RESP["tn_xterm"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999
+     + XT_RESP["colors_256"] + XT_RESP["clear"] + XT_RESP["am"]
+     + XT_RESP["cols_80"] + XT_RESP["lines_24"] + CPR_31_128,
      ["export TERM=xterm", "export TERMINFO=", "export TERMCAP="],
      ["export LINES=", "export COLUMNS="]),
     ("-v",
-     _XT_RESP["tn_xterm"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999,
+     XT_RESP["tn_xterm"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999,
      ["export TERM=xterm"],
      ["export TERMINFO=", "export TERMCAP=", "export LINES=", "export COLUMNS="]),
     ("-vft",
-     _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999,
+     CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999,
      ["XTGETTCAP not supported by this terminal"],
      ["export TERM=", "export TERMINFO=", "export TERMCAP=",
       "export LINES=", "export COLUMNS="]),
     ("-vft",
-     _XT_RESP["colors_256"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999,
+     XT_RESP["colors_256"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999,
      ["no TN (terminal name) capability"],
      ["export TERM=", "export TERMINFO=", "export TERMCAP=",
       "export LINES=", "export COLUMNS="]),
     ("-vft",
-     _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _DECRQSS_SGR_ORIGINAL + _CPR_6_7
-     + _DECRQSS_SGR_TRUECOLOR + _CPR_5_10
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999
-     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
-     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     XT_RESP["tn_xterm"] + XT_RESP["rgb_8_8_8"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + DECRQSS_SGR_ORIGINAL + CPR_6_7
+     + DECRQSS_SGR_TRUECOLOR + CPR_5_10
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999
+     + XT_RESP["colors_256"] + XT_RESP["clear"] + XT_RESP["am"]
+     + XT_RESP["cols_80"] + XT_RESP["lines_24"] + CPR_31_128,
      ["export COLORTERM=truecolor", "export TERM=xterm",
       "export TERMINFO=", "export TERMCAP="],
      []),
     ("-vft",
-     _XT_RESP["tn_xterm"] + _XT_RESP["colors_256"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999
-     + _XT_RESP["colors_256"] + _CPR_31_128,
+     XT_RESP["tn_xterm"] + XT_RESP["colors_256"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999
+     + XT_RESP["colors_256"] + CPR_31_128,
      ["export TERM=xterm"],
      ["export TERMINFO=", "export TERMCAP=", "export COLORTERM="]),
     ("-v",
-     _XT_RESP["tn_nonexist"] + _CPR_31_128
-     + _CPR_5_10
-     + _CPR_31_128
-     + _CPR_31_128
-     + _CPR_6_7
-     + _DECRPM_none + _CPR_5_10
-     + _CPR_999_999
-     + _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
-     + _XT_RESP["cols_80"] + _XT_RESP["lines_24"] + _CPR_31_128,
+     XT_RESP["tn_nonexist"] + CPR_31_128
+     + CPR_5_10
+     + CPR_31_128
+     + CPR_31_128
+     + CPR_6_7
+     + DECRPM_none + CPR_5_10
+     + CPR_999_999
+     + XT_RESP["colors_256"] + XT_RESP["clear"] + XT_RESP["am"]
+     + XT_RESP["cols_80"] + XT_RESP["lines_24"] + CPR_31_128,
      ["export TERM=nonexist", "export TERMINFO="],
      ["export TERMCAP="]),
 ])
 def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path):
+    """The PTY run exports the expected values and writes a terminfo file."""
     terminfo_dir = tmp_path / "ttyscan" / "terminfo"
     project_coverage = os.path.join(os.path.dirname(__file__), ".coverage")
 
@@ -803,7 +868,7 @@ def test_generate_exports_pty(flags, response, expected, not_expected, tmp_path)
     env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
-    text, _ = _pty_run(
+    text, _ = pty_run(
         [sys.executable, "-m", "coverage", "run", "--append",
          "-m", "ttyscan"] + flags.split(),
         env, response)
@@ -837,17 +902,17 @@ def test_generate_exports_pty_inband_resize(tmp_path):
     env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
-    response = (_CPR_31_128
-                + _CPR_5_10
-                + _CPR_31_128
-                + _CPR_31_128
-                + _CPR_6_7
-                + _DECRPM_set + _CPR_31_128
-                + _RESIZE_31_128 + _CPR_31_128
-                + b"\x1b[48;25;98;0;0t" + _CPR_31_128
-                + _CPR_31_128)
+    response = (CPR_31_128
+                + CPR_5_10
+                + CPR_31_128
+                + CPR_31_128
+                + CPR_6_7
+                + DECRPM_set + CPR_31_128
+                + RESIZE_31_128 + CPR_31_128
+                + b"\x1b[48;25;98;0;0t" + CPR_31_128
+                + CPR_31_128)
 
-    text, status = _pty_run(
+    text, status = pty_run(
         [sys.executable, "-m", "coverage", "run", "--append",
          "-m", "ttyscan"],
         env, response)
@@ -870,17 +935,17 @@ def test_size_probe_waits_for_late_cpr(tmp_path):
         "TERM": "dumb",
     }
     responses = [
-        (0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-        (0.1, _XTVERSION_XTERM + _CPR_5_10),
-        (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_6_7),
-        (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_5_10),
-        (0.6, _DECRPM_none + _CPR_5_10),
-        (0.6, _CPR_31_128),
-        (0.1, _XT_RESP["colors_256"] + _XT_RESP["clear"] + _XT_RESP["am"]
-         + _CPR_31_128),
+        (0.0, XT_RESP["tn_xterm"] + CPR_31_128),
+        (0.1, XTVERSION_XTERM + CPR_5_10),
+        (0.1, DECRQSS_SGR_ORIGINAL + CPR_6_7),
+        (0.1, DECRQSS_SGR_TRUECOLOR + CPR_5_10),
+        (0.6, DECRPM_none + CPR_5_10),
+        (0.6, CPR_31_128),
+        (0.1, XT_RESP["colors_256"] + XT_RESP["clear"] + XT_RESP["am"]
+         + CPR_31_128),
     ]
 
-    text, status = _pty_run_staggered(
+    text, status = pty_run_staggered(
         [sys.executable, "-m", "coverage", "run", "--append", "-m", "ttyscan", "-vf"],
         env, responses)
 
@@ -892,6 +957,7 @@ def test_size_probe_waits_for_late_cpr(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty requires unix")
 def test_main_exits_without_cpr(tmp_path):
+    """A terminal that never answers a CPR exits with an error."""
     env = {
         **dict(os.environ),
         "XDG_CONFIG_HOME": str(tmp_path),
@@ -900,7 +966,7 @@ def test_main_exits_without_cpr(tmp_path):
         "TERM": "dumb",
     }
 
-    text, status = _pty_run(
+    text, status = pty_run(
         [sys.executable, "-m", "coverage", "run", "--append", "-m", "ttyscan"],
         env, b"")
 
@@ -913,79 +979,79 @@ def test_main_exits_without_cpr(tmp_path):
 @pytest.mark.parametrize("flags,responses,env_extra,expected,not_expected", [
     pytest.param(
         "-v",
-        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-         (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
-         (0.1, _DECRPM_none + _CPR_5_10),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_999_999)],
+        [(0.0, XT_RESP["tn_xterm"] + CPR_31_128),
+         (0.1, DECRQSS_SGR_ORIGINAL + CPR_5_10),
+         (0.1, DECRQSS_SGR_TRUECOLOR + CPR_6_7),
+         (0.1, DECRPM_none + CPR_5_10),
+         (0.1, CPR_999_999),
+         (0.1, CPR_999_999)],
         {"TERM_PROGRAM": "xterm"},
         ["export COLORTERM=truecolor", "export TERM=xterm"],
         ["export LINES=", "export COLUMNS=", "export TERMINFO=", "export TERMCAP="],
         id="probe-detects-truecolor"),
     pytest.param(
         "-v",
-        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-         (0.1, _DECRPM_none + _CPR_5_10),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_999_999)],
+        [(0.0, XT_RESP["tn_xterm"] + CPR_31_128),
+         (0.1, DECRPM_none + CPR_5_10),
+         (0.1, CPR_999_999),
+         (0.1, CPR_999_999)],
         {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
         ["export TERM=xterm"],
         ["export COLORTERM=truecolor"],
         id="colorterm-already-set"),
     pytest.param(
         "-v",
-        [(0.0, _XT_RESP["tn_xterm"] + _XT_RESP["rgb_8_8_8"] + _CPR_31_128),
-         (0.1, _DECRPM_none + _CPR_31_128),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_999_999)],
+        [(0.0, XT_RESP["tn_xterm"] + XT_RESP["rgb_8_8_8"] + CPR_31_128),
+         (0.1, DECRPM_none + CPR_31_128),
+         (0.1, CPR_999_999),
+         (0.1, CPR_999_999)],
         {"TERM_PROGRAM": "xterm"},
         ["export COLORTERM=truecolor", "export TERM=xterm"],
         ["export TERMINFO=", "export TERMCAP="],
         id="rgb-capability"),
     pytest.param(
         "-vf",
-        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-         (0.1, _XTVERSION_XTERM + _CPR_5_10),
-         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_6_7),
-         (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_5_10),
-         (0.1, _DECRPM_none + _CPR_6_7),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_31_128)],
+        [(0.0, XT_RESP["tn_xterm"] + CPR_31_128),
+         (0.1, XTVERSION_XTERM + CPR_5_10),
+         (0.1, DECRQSS_SGR_ORIGINAL + CPR_6_7),
+         (0.1, DECRQSS_SGR_TRUECOLOR + CPR_5_10),
+         (0.1, DECRPM_none + CPR_6_7),
+         (0.1, CPR_999_999),
+         (0.1, CPR_999_999),
+         (0.1, CPR_31_128)],
         {"TERM_PROGRAM": "xterm", "COLORTERM": "truecolor"},
         ["export COLORTERM=truecolor", "export TERM=xterm"],
         [],
         id="force-probes-anyway"),
     pytest.param(
         "-v",
-        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-         (0.1, _DECRPM_none + _CPR_5_10),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_999_999)],
+        [(0.0, XT_RESP["tn_xterm"] + CPR_31_128),
+         (0.1, DECRPM_none + CPR_5_10),
+         (0.1, CPR_999_999),
+         (0.1, CPR_999_999)],
         {"TERM_PROGRAM": "xterm"},
         ["export TERM=xterm"],
         ["export COLORTERM=truecolor"],
         id="decrqss-unsupported"),
     pytest.param(
         "-v",
-        [(0.0, _XT_RESP["tn_xterm"] + _CPR_31_128),
-         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-         (0.1, _DECRQSS_SGR_PALETTE + _CPR_6_7),
-         (0.1, _DECRPM_none + _CPR_5_10),
-         (0.1, _CPR_999_999),
-         (0.1, _CPR_999_999)],
+        [(0.0, XT_RESP["tn_xterm"] + CPR_31_128),
+         (0.1, DECRQSS_SGR_ORIGINAL + CPR_5_10),
+         (0.1, DECRQSS_SGR_PALETTE + CPR_6_7),
+         (0.1, DECRPM_none + CPR_5_10),
+         (0.1, CPR_999_999),
+         (0.1, CPR_999_999)],
         {"TERM_PROGRAM": "xterm"},
         ["export TERM=xterm"],
         ["export COLORTERM=truecolor"],
         id="palette-index"),
     pytest.param(
         "-v",
-        [(0.0, _CPR_31_128),
-         (0.1, _DECRQSS_SGR_ORIGINAL + _CPR_5_10),
-         (0.1, _DECRQSS_SGR_TRUECOLOR + _CPR_6_7),
-         (0.1, _DECRPM_none + _CPR_5_10),
-         (0.1, _CPR_999_999)],
+        [(0.0, CPR_31_128),
+         (0.1, DECRQSS_SGR_ORIGINAL + CPR_5_10),
+         (0.1, DECRQSS_SGR_TRUECOLOR + CPR_6_7),
+         (0.1, DECRPM_none + CPR_5_10),
+         (0.1, CPR_999_999)],
         {"TERM_PROGRAM": "xterm"},
         ["export COLORTERM=truecolor"],
         ["export TERM=", "export TERMINFO=", "export LINES=", "export COLUMNS="],
@@ -993,6 +1059,7 @@ def test_main_exits_without_cpr(tmp_path):
 ])
 def test_decrqss_probe_pty(flags, responses, env_extra, expected,
                            not_expected, tmp_path):
+    """The DECRQSS truecolor probe exports the expected values."""
     env = {
         **dict(os.environ),
         "XDG_CONFIG_HOME": str(tmp_path),
@@ -1005,7 +1072,7 @@ def test_decrqss_probe_pty(flags, responses, env_extra, expected,
     project_coverage = os.path.join(os.path.dirname(__file__), ".coverage")
     env["COVERAGE_FILE"] = project_coverage
 
-    text, status = _pty_run_staggered(
+    text, status = pty_run_staggered(
         [sys.executable, "-m", "coverage", "run", "--append",
          "-m", "ttyscan"] + flags.split(),
         env, responses)
@@ -1092,7 +1159,7 @@ def test_enq_query_ignores_stray_replies(answer):
 
 def test_probe_width():
     """The cursor column after the grapheme, minus one, is its width."""
-    probe = _TERM_PROBES[0]
+    probe = TERM_PROBES[0]
     buf = "\x1b[1;11R"
     fence = re.search(r"\x1b\[([0-9]+);([0-9]+)R", buf)
     with patch('ttyscan.read_until', return_value=(fence, buf)) as mock_read, \
@@ -1106,61 +1173,67 @@ def test_probe_width_erases_a_grapheme_left_by_a_missing_cpr():
     with patch('ttyscan.read_until', side_effect=NoCPRReply("no fence")), \
             patch('ttyscan.write_all') as mock_write:
         with pytest.raises(NoCPRReply):
-            probe_width(3, _TERM_PROBES[0])
+            probe_width(3, TERM_PROBES[0])
     mock_write.assert_called_with(3, '\r\x1b[K')
 
 
-def _ask_sequence(da1, widths):
-    candidates = [row for row in _TERM_QUIZ if row[0] == da1]
+def ask_sequence(da1, widths):
+    """Return the probe widths asked of *da1* before a unique match."""
+    candidates = [profile for profile in TERM_QUIZ if profile.da1 == da1]
     asked = []
     while len(candidates) > 1:
-        for index in range(len(_TERM_PROBES)):
-            if not all(index in row[2] for row in candidates):
+        for index in range(len(TERM_PROBES)):
+            if not all(index in profile.widths for profile in candidates):
                 continue
-            if len({row[2][index] for row in candidates}) == 1:
+            if len({profile.widths[index] for profile in candidates}) == 1:
                 continue
             value = widths[index]
             asked.append(value)
-            candidates = [row for row in candidates if row[2][index] == value]
+            candidates = [profile for profile in candidates
+                          if profile.widths[index] == value]
             break
         else:
             break
     return asked
 
 
-def _resolve_set(da1, widths):
-    candidates = [row for row in _TERM_QUIZ if row[0] == da1]
+def resolve_set(da1, widths):
+    """Return the names still possible for *da1* after asking *widths*."""
+    candidates = [profile for profile in TERM_QUIZ if profile.da1 == da1]
     while len(candidates) > 1:
-        for index in range(len(_TERM_PROBES)):
-            if not all(index in row[2] for row in candidates):
+        for index in range(len(TERM_PROBES)):
+            if not all(index in profile.widths for profile in candidates):
                 continue
-            if len({row[2][index] for row in candidates}) == 1:
+            if len({profile.widths[index] for profile in candidates}) == 1:
                 continue
             value = widths[index]
-            candidates = [row for row in candidates if row[2][index] == value]
+            candidates = [profile for profile in candidates
+                          if profile.widths[index] == value]
             break
         else:
             break
-    return [row[1] for row in candidates]
+    return [profile.name for profile in candidates]
 
 
-def _da1_reply(da1):
+def da1_reply(da1):
     marker, service, extensions = da1
     params = ";".join(str(value) for value in (service,) + extensions)
     return ("\x1b[" + marker + params + "c").encode()
 
 
-def _cpr_for_width(width):
+def cpr_for_width(width):
     return ("\x1b[1;%dR" % (width + 1)).encode()
 
 
-@pytest.mark.parametrize("da1,name,widths", _TERM_QUIZ,
-                         ids=[row[1] for row in _TERM_QUIZ])
+@pytest.mark.parametrize("da1,name,widths",
+                         [(profile.da1, profile.name, profile.widths)
+                          for profile in TERM_QUIZ],
+                         ids=[profile.name for profile in TERM_QUIZ])
 def test_detect_terminal_every_row(da1, name, widths):
     """Every row either resolves uniquely or reports an honest class."""
     def fake_width(fd, probe, timeout):
-        return widths[_TERM_PROBES.index(probe)]
-    expected = _resolve_set(da1, widths)
+        return widths[TERM_PROBES.index(probe)]
+    expected = resolve_set(da1, widths)
     with patch.dict(os.environ, {'TERM': ''}), \
             patch('ttyscan.da1_query', return_value=da1), \
             patch('ttyscan.probe_width', side_effect=fake_width):
@@ -1177,7 +1250,7 @@ def test_detect_terminal_splits_conemu_from_extraterm():
     widths = {0: 6, 1: 9, 2: 1}
 
     def fake_width(fd, probe, timeout):
-        return widths[_TERM_PROBES.index(probe)]
+        return widths[TERM_PROBES.index(probe)]
 
     with patch('ttyscan.da1_query', return_value=('?', 1, (2,))), \
             patch('ttyscan.probe_width', side_effect=fake_width):
@@ -1203,28 +1276,30 @@ def test_detect_terminal_da1_without_a_cpr():
         assert detect_terminal(3) is None
 
 
-def _failing_first_probe(widths):
+def failing_first_probe(widths):
     def fake_width(fd, probe, timeout):
-        if probe == _TERM_PROBES[0]:
+        if probe == TERM_PROBES[0]:
             raise NoCPRReply("no fence")
-        return widths[_TERM_PROBES.index(probe)]
+        return widths[TERM_PROBES.index(probe)]
     return fake_width
 
 
 @pytest.mark.parametrize("terminal", ["QTerminal", "alacritty", "st"])
 def test_detect_terminal_probe_without_a_cpr_stays_unresolved(terminal):
     """A failed first probe leaves a group that only that probe could split."""
-    da1, _name, widths = next(row for row in _TERM_QUIZ if row[1] == terminal)
-    with patch('ttyscan.da1_query', return_value=da1), \
-            patch('ttyscan.probe_width', side_effect=_failing_first_probe(widths)):
+    profile = next(item for item in TERM_QUIZ if item.name == terminal)
+    with patch('ttyscan.da1_query', return_value=profile.da1), \
+            patch('ttyscan.probe_width',
+                  side_effect=failing_first_probe(profile.widths)):
         assert detect_terminal(3) is None
 
 
 def test_detect_terminal_probe_without_a_cpr_reports_the_class():
     """A terminal separable only by the failed probe is reported as a class."""
-    da1, _name, widths = next(row for row in _TERM_QUIZ if row[1] == "Hyper")
-    with patch('ttyscan.da1_query', return_value=da1), \
-            patch('ttyscan.probe_width', side_effect=_failing_first_probe(widths)):
+    profile = next(item for item in TERM_QUIZ if item.name == "Hyper")
+    with patch('ttyscan.da1_query', return_value=profile.da1), \
+            patch('ttyscan.probe_width',
+                  side_effect=failing_first_probe(profile.widths)):
         assert detect_terminal(3) is None
 
 
@@ -1233,9 +1308,10 @@ def test_detect_terminal_probe_without_a_cpr_reports_the_class():
                                       "zutty"])
 def test_generate_exports_ladder_pty(terminal, tmp_path):
     """A silent ENQ falls through to the measured table."""
-    da1, name, widths = next(row for row in _TERM_QUIZ if row[1] == terminal)
-    quiz_replies = [_CPR_31_128, _da1_reply(da1) + _CPR_31_128]
-    quiz_replies += [_cpr_for_width(width) for width in _ask_sequence(da1, widths)]
+    profile = next(item for item in TERM_QUIZ if item.name == terminal)
+    quiz_replies = [CPR_31_128, da1_reply(profile.da1) + CPR_31_128]
+    quiz_replies += [cpr_for_width(width) for width in ask_sequence(
+        profile.da1, profile.widths)]
 
     env = {
         **dict(os.environ),
@@ -1247,21 +1323,21 @@ def test_generate_exports_ladder_pty(terminal, tmp_path):
     env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
-    responses = [(0.0, _CPR_31_128),
-                 (0.0, _CPR_31_128)]
+    responses = [(0.0, CPR_31_128),
+                 (0.0, CPR_31_128)]
     responses += [(0.1, reply) for reply in quiz_replies]
-    responses += [(0.1, _CPR_31_128),
-                  (0.1, _DECRPM_none + _CPR_5_10),
-                  (0.1, _CPR_999_999)]
+    responses += [(0.1, CPR_31_128),
+                  (0.1, DECRPM_none + CPR_5_10),
+                  (0.1, CPR_999_999)]
 
-    text, status = _pty_run_staggered(
+    text, status = pty_run_staggered(
         [sys.executable, "-m", "coverage", "run", "--append",
          "-m", "ttyscan", "-v"],
         env, responses)
 
     assert os.WIFEXITED(status)
     assert os.WEXITSTATUS(status) == 0
-    assert "export TERM_PROGRAM='%s'" % name in text
+    assert "export TERM_PROGRAM='%s'" % profile.name in text
     assert "TERM_PROGRAM_VERSION" not in text
 
 
@@ -1282,14 +1358,14 @@ def test_generate_exports_enq_pty(answer, version, tmp_path):
     env.pop("TERM_PROGRAM", None)
     env["TERM"] = "dumb"
 
-    responses = [(0.0, _CPR_31_128),
-                 (0.0, _CPR_31_128),
-                 (0.1, answer + _CPR_31_128),
-                 (0.1, _CPR_31_128),
-                 (0.1, _DECRPM_none + _CPR_5_10),
-                 (0.1, _CPR_999_999)]
+    responses = [(0.0, CPR_31_128),
+                 (0.0, CPR_31_128),
+                 (0.1, answer + CPR_31_128),
+                 (0.1, CPR_31_128),
+                 (0.1, DECRPM_none + CPR_5_10),
+                 (0.1, CPR_999_999)]
 
-    text, status = _pty_run_staggered(
+    text, status = pty_run_staggered(
         [sys.executable, "-m", "coverage", "run", "--append",
          "-m", "ttyscan", "-v"],
         env, responses)
@@ -1306,7 +1382,7 @@ def test_generate_exports_enq_pty(answer, version, tmp_path):
 GENERATOR = Path(__file__).parent / "update-detect-table.py"
 
 
-def _load_generator():
+def load_generator():
     import importlib.util
     spec = importlib.util.spec_from_file_location("update_detect_table", GENERATOR)
     module = importlib.util.module_from_spec(spec)
@@ -1314,7 +1390,8 @@ def _load_generator():
     return module
 
 
-def _fake_data_dir(tmp_path):
+def fake_data_dir(tmp_path):
+    """Create a minimal ucs-detect data and width-table layout."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     package = tmp_path / "ucs_detect"
@@ -1328,7 +1405,8 @@ def _fake_data_dir(tmp_path):
     return data_dir
 
 
-def _fake_run(name, da1, values, method=None, tn=None, n_total=10, narrow=None):
+def fake_run(name, da1, values, method=None, tn=None, n_total=10, narrow=None):
+    """Return one ucs-detect run whose failed codepoints measure *values*."""
     failed = [{"wchar": probe, "measured_by_terminal": width,
                "measured_by_wcwidth": 2}
               for probe, width in values.items()]
@@ -1357,7 +1435,7 @@ def _fake_run(name, da1, values, method=None, tn=None, n_total=10, narrow=None):
     ("\u3248", "\u3248"),
 ])
 def test_generator_decode_wchar(value, expected):
-    generator = _load_generator()
+    generator = load_generator()
     assert generator.decode_wchar(value) == expected
 
 
@@ -1367,45 +1445,46 @@ def test_generator_decode_wchar(value, expected):
     ("\x1b[?62;4;9;22c", ('?', 62, (4, 9, 22))),
 ])
 def test_generator_parse_da1(raw, expected):
-    generator = _load_generator()
+    generator = load_generator()
     assert generator.parse_da1(raw) == expected
 
 
 @pytest.mark.parametrize("raw", ["", "\x1b[?c", "x"])
 def test_generator_parse_da1_rejects(raw):
-    generator = _load_generator()
+    generator = load_generator()
     with pytest.raises(SystemExit):
         generator.parse_da1(raw)
 
 
 def test_generator_majority_version():
-    generator = _load_generator()
+    generator = load_generator()
     runs = [{"wcwidth_version": "0.8.4"}] * 3 + [{"wcwidth_version": "0.9.2"}]
     assert generator.majority_version(runs) == "0.8.4"
 
 
 def test_generator_unique_tn():
-    generator = _load_generator()
-    assert generator.unique_tn(_fake_run("A", "\x1b[?1;2c", {}, tn="kitty"))
-    assert not generator.unique_tn(_fake_run("A", "\x1b[?1;2c", {}, tn="xterm"))
-    assert not generator.unique_tn(_fake_run("A", "\x1b[?1;2c", {}))
+    generator = load_generator()
+    assert generator.unique_tn(fake_run("A", "\x1b[?1;2c", {}, tn="kitty"))
+    assert not generator.unique_tn(fake_run("A", "\x1b[?1;2c", {}, tn="xterm"))
+    assert not generator.unique_tn(fake_run("A", "\x1b[?1;2c", {}))
 
 
 def test_generator_load_width_table_rejects_missing_file(tmp_path):
-    generator = _load_generator()
+    generator = load_generator()
     with pytest.raises(SystemExit):
         generator.load_width_table(tmp_path, "table_narrow", "NARROW_CHARACTERS")
 
 
 def test_generator_build_rows_drops_old_versions_and_unresolvable_terminals(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    """Only current versions and separable terminals become rows."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     runs = [
-        _fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 2}),
-        _fake_run("Named", "\x1b[?1;2c", {"PROBE-A": 2}, method="XTVERSION"),
-        _fake_run("Answerback", "\x1b[?1;2c", {"PROBE-A": 2}, method="ENQ"),
-        _fake_run("Kitty", "\x1b[?1;2c", {"PROBE-A": 2}, tn="kitty"),
-        _fake_run("Older", "\x1b[?1;2c", {"PROBE-A": 2}),
+        fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 2}),
+        fake_run("Named", "\x1b[?1;2c", {"PROBE-A": 2}, method="XTVERSION"),
+        fake_run("Answerback", "\x1b[?1;2c", {"PROBE-A": 2}, method="ENQ"),
+        fake_run("Kitty", "\x1b[?1;2c", {"PROBE-A": 2}, tn="kitty"),
+        fake_run("Older", "\x1b[?1;2c", {"PROBE-A": 2}),
     ]
     runs[-1]["wcwidth_version"] = "0.7.0"
     rows, skipped, expected = generator.build_rows(runs, data_dir)
@@ -1416,15 +1495,16 @@ def test_generator_build_rows_drops_old_versions_and_unresolvable_terminals(tmp_
 
 
 def test_generator_build_rows_excludes_multiplexers(tmp_path, capsys):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    """Multiplexers are excluded from the quiz."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     runs = [
-        _fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8}),
-        _fake_run("GNU Screen", "\x1b[?1;2c", {"PROBE-A": 2}),
-        _fake_run("tmux", "\x1b[?1;2c", {"PROBE-A": 2}),
-        _fake_run("Zellij", "\x1b[?1;2c", {"PROBE-A": 2}),
+        fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8}),
+        fake_run("GNU Screen", "\x1b[?1;2c", {"PROBE-A": 2}),
+        fake_run("tmux", "\x1b[?1;2c", {"PROBE-A": 2}),
+        fake_run("Zellij", "\x1b[?1;2c", {"PROBE-A": 2}),
     ]
-    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert [row["name"] for row in rows] == ["Anonymous"]
     err = capsys.readouterr().err
     assert "excluding GNU Screen" in err
@@ -1433,59 +1513,63 @@ def test_generator_build_rows_excludes_multiplexers(tmp_path, capsys):
 
 
 def test_generator_build_rows_keeps_only_tested_probes(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    """A probe is recorded only when that run measured it."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     runs = [
-        _fake_run("Short", "\x1b[?1;2c", {"PROBE-A": 8}, n_total=1),
-        _fake_run("Full", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 5}),
+        fake_run("Short", "\x1b[?1;2c", {"PROBE-A": 8}, n_total=1),
+        fake_run("Full", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 5}),
     ]
-    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert rows[0]["values"] == {"PROBE-A": 8}
     assert rows[1]["values"] == {"PROBE-A": 8, "PROBE-B": 5}
 
 
 def test_generator_build_rows_reads_a_tested_sri_probe(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
-    measured = _fake_run("Measured", "\x1b[?1;2c", {"PROBE-A": 2})
+    """A tested standalone regional indicator contributes its width."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    measured = fake_run("Measured", "\x1b[?1;2c", {"PROBE-A": 2})
     measured["test_results"]["sri_results"] = {"18.0.0": {
         "n_total": 1, "failed_codepoints": [
             {"wchar": "\\U0001f1ff", "measured_by_terminal": 1,
              "measured_by_wcwidth": 2}]}}
-    tested = _fake_run("Tested", "\x1b[?1;2c", {"PROBE-A": 2})
+    tested = fake_run("Tested", "\x1b[?1;2c", {"PROBE-A": 2})
     tested["test_results"]["sri_results"] = {"18.0.0": {
         "n_total": 1, "failed_codepoints": []}}
-    rows, _skipped, _expected = generator.build_rows([measured, tested], data_dir)
+    rows, skipped, expected = generator.build_rows([measured, tested], data_dir)
     values = {row["name"]: row["values"] for row in rows}
     assert values["Measured"]["\U0001f1ff"] == 1
     assert values["Tested"]["\U0001f1ff"] == 2
 
 
 def test_generator_build_rows_keeps_a_separable_shadow(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    """A shadow separated by a probe stays in the quiz."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     runs = [
-        _fake_run("Primary", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 2}),
-        _fake_run("Shadow", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 5},
-                  method="ENQ"),
+        fake_run("Primary", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 2}),
+        fake_run("Shadow", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 5},
+                 method="ENQ"),
     ]
-    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert [row["name"] for row in rows] == ["Primary", "Shadow"]
 
 
 def test_generator_build_rows_drops_an_unresolvable_shadow(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     runs = [
-        _fake_run("Primary", "\x1b[?1;2c", {"PROBE-A": 2}),
-        _fake_run("Shadow", "\x1b[?1;2c", {"PROBE-A": 2}, method="ENQ"),
+        fake_run("Primary", "\x1b[?1;2c", {"PROBE-A": 2}),
+        fake_run("Shadow", "\x1b[?1;2c", {"PROBE-A": 2}, method="ENQ"),
     ]
-    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert [row["name"] for row in rows] == ["Primary"]
 
 
 def test_generator_usable_probe():
-    generator = _load_generator()
+    """Unstable or ambiguous codepoints are rejected as probes."""
+    generator = load_generator()
     assert generator.usable_probe("\U0001f575\U0001f3ff\u200d\u2642\ufe0f")
     assert generator.usable_probe("\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe")
     assert generator.usable_probe("\u17d8")
@@ -1497,24 +1581,26 @@ def test_generator_usable_probe():
 
 
 def test_generator_build_rows_reads_a_tested_narrow_probe(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    """A tested narrow codepoint contributes its measured width."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     record = [{"wchar": "\u17d8", "measured_by_terminal": 2,
                "measured_by_wcwidth": 1},
               {"wchar": "\u0605", "measured_by_terminal": 0,
                "measured_by_wcwidth": 1}]
     runs = [
-        _fake_run("Measured", "\x1b[?1;2c", {"PROBE-A": 2}, narrow=record),
-        _fake_run("Tested", "\x1b[?1;2c", {"PROBE-A": 2}, narrow=[]),
+        fake_run("Measured", "\x1b[?1;2c", {"PROBE-A": 2}, narrow=record),
+        fake_run("Tested", "\x1b[?1;2c", {"PROBE-A": 2}, narrow=[]),
     ]
-    rows, _skipped, _expected = generator.build_rows(runs, data_dir)
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert rows[0]["values"]["\u17d8"] == 2
     assert rows[1]["values"]["\u17d8"] == 1
     assert "\u0605" not in rows[0]["values"]
 
 
 def test_generator_choose_probes():
-    generator = _load_generator()
+    """Probes cover every pair of terminals sharing a DA1."""
+    generator = load_generator()
     rows = [
         {"name": "A", "da1": ('?', 6, ()), "values": {"P": 0, "Q": 1}},
         {"name": "B", "da1": ('?', 6, ()), "values": {"P": 1, "Q": 1}},
@@ -1527,7 +1613,7 @@ def test_generator_choose_probes():
 
 
 def test_generator_choose_probes_reports_an_unseparated_pair():
-    generator = _load_generator()
+    generator = load_generator()
     rows = [
         {"name": "A", "da1": ('?', 6, ()), "values": {"P": 1}},
         {"name": "B", "da1": ('?', 6, ()), "values": {"P": 1}},
@@ -1538,13 +1624,15 @@ def test_generator_choose_probes_reports_an_unseparated_pair():
 
 
 def test_generator_render_block():
-    generator = _load_generator()
+    """The rendered block holds a TerminalProfile per terminal."""
+    generator = load_generator()
     rows = [
         {"name": "A", "da1": ('?', 6, ()), "values": {"P": 0, "Q": 1}},
         {"name": "B", "da1": ('?', 62, ()), "values": {"P": 1}},
     ]
     block = generator.render_block(rows, ["P", "Q"], "note")
-    assert "('?', 6, ())" in block
+    assert "TerminalProfile('A'," in block
+    assert "('?', 6, ()), {0: 0, 1: 1})" in block
     assert "'A'" in block
     assert "{0: 0, 1: 1}" in block
     assert block.startswith(generator.START)
@@ -1552,12 +1640,13 @@ def test_generator_render_block():
 
 
 def test_generator_main_writes_and_checks(tmp_path):
+    """The generator writes a block and detects a stale one."""
     import yaml
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
-    for run in (_fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 4}),
-                _fake_run("Other", "\x1b[?6c", {"PROBE-A": 2, "PROBE-B": 2}),
-                _fake_run("Older", "\x1b[?6c", {"PROBE-A": 2})):
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    for run in (fake_run("Anonymous", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 4}),
+                fake_run("Other", "\x1b[?6c", {"PROBE-A": 2, "PROBE-B": 2}),
+                fake_run("Older", "\x1b[?6c", {"PROBE-A": 2})):
         if run["software_name"] == "Older":
             run["wcwidth_version"] = "0.7.0"
         with (data_dir / (run["software_name"] + ".yaml")).open("w") as handle:
@@ -1578,11 +1667,12 @@ def test_generator_main_writes_and_checks(tmp_path):
 
 
 def test_generator_main_warns_about_unseparable_terminals(tmp_path, capsys):
+    """Unseparable terminals are reported on stderr."""
     import yaml
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
     for name in ("A", "B"):
-        run = _fake_run(name, "\x1b[?1;2c", {"PROBE-A": 2})
+        run = fake_run(name, "\x1b[?1;2c", {"PROBE-A": 2})
         with (data_dir / (name + ".yaml")).open("w") as handle:
             yaml.safe_dump(run, handle)
 
@@ -1596,31 +1686,31 @@ def test_generator_main_warns_about_unseparable_terminals(tmp_path, capsys):
 
 
 def test_generator_load_runs_rejects_empty_directory(tmp_path):
-    generator = _load_generator()
+    generator = load_generator()
     with pytest.raises(SystemExit):
         generator.load_runs(tmp_path)
 
 
 def test_generator_majority_version_requires_a_version():
-    generator = _load_generator()
+    generator = load_generator()
     with pytest.raises(SystemExit):
         generator.majority_version([{}, {}])
 
 
 def test_generator_build_rows_rejects_mixed_unicode_versions(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
-    runs = [_fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8}),
-            _fake_run("B", "\x1b[?1;2c", {"PROBE-A": 8})]
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    runs = [fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8}),
+            fake_run("B", "\x1b[?1;2c", {"PROBE-A": 8})]
     runs[1]["unicode_version"] = "17.0.0"
     with pytest.raises(SystemExit):
         generator.build_rows(runs, data_dir)
 
 
 def test_generator_build_rows_rejects_wcwidth_disagreement(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
-    run = _fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8})
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    run = fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8})
     run["test_results"]["narrow_results"] = {"18.0.0": {"failed_codepoints": [
         {"wchar": "PROBE-A", "measured_by_terminal": 1,
          "measured_by_wcwidth": 3}]}}
@@ -1629,16 +1719,17 @@ def test_generator_build_rows_rejects_wcwidth_disagreement(tmp_path):
 
 
 def test_generator_build_rows_rejects_duplicate_names(tmp_path):
-    generator = _load_generator()
-    data_dir = _fake_data_dir(tmp_path)
-    runs = [_fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8}),
-            _fake_run("A", "\x1b[?6c", {"PROBE-A": 2})]
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    runs = [fake_run("A", "\x1b[?1;2c", {"PROBE-A": 8}),
+            fake_run("A", "\x1b[?6c", {"PROBE-A": 2})]
     with pytest.raises(SystemExit):
         generator.build_rows(runs, data_dir)
 
 
 def test_generator_source_note_reads_git(tmp_path):
-    generator = _load_generator()
+    """The header records the data commit and dirty state."""
+    generator = load_generator()
     subprocess.check_call(["git", "init", "-q", str(tmp_path)])
     (tmp_path / "x.yaml").write_text("x")
     subprocess.check_call(["git", "-C", str(tmp_path), "add", "x.yaml"])

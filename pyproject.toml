@@ -8,7 +8,9 @@ version = '0.0.9'
 description = "Queries a terminal emulator for its type, size and capabilities"
 readme = "README.rst"
 requires-python = ">=3.6"
-dependencies = []
+dependencies = [
+  "dataclasses; python_version < '3.7'",
+]
 keywords = [
     "xtgettcap",
     "curses",
@@ -51,7 +53,7 @@ classifiers = [
 ]
 
 [project.scripts]
-ttyscan = "ttyscan:main"
+ttyscan = "ttyscan:cli"
 
 [project.urls]
 Homepage = "https://github.com/jquast/ttyscan"

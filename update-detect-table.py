@@ -46,14 +46,15 @@ def decode_wchar(value):
 
 
 def load_runs(data_dir):
+    """Return the YAML runs in *data_dir*, each tagged with its file name."""
     runs = []
     for path in sorted(Path(data_dir).glob("*.yaml")):
         with path.open(encoding="utf-8") as handle:
             run = yaml.safe_load(handle)
-        run["_file"] = path.name
+        run["source_file"] = path.name
         runs.append(run)
     if not runs:
-        raise SystemExit("update-detect-table: no YAML data in %s" % data_dir)
+        raise SystemExit(f"update-detect-table: no YAML data in {data_dir}")
     return runs
 
 
@@ -75,26 +76,27 @@ def unique_tn(run):
 def parse_da1(raw):
     match = re.fullmatch(r"\x1b\[(\??)([0-9;]*)c", raw or "")
     if match is None:
-        raise SystemExit("update-detect-table: unparsable DA1 reply %r" % (raw,))
+        raise SystemExit(f"update-detect-table: unparsable DA1 reply {raw!r}")
     params = [int(part) for part in match.group(2).split(";") if part.isdigit()]
     if not params:
-        raise SystemExit("update-detect-table: empty DA1 reply %r" % (raw,))
+        raise SystemExit(f"update-detect-table: empty DA1 reply {raw!r}")
     return match.group(1), params[0], tuple(sorted(params[1:]))
 
 
 def load_width_table(data_dir, module, variable):
     path = Path(data_dir).resolve().parent / "ucs_detect" / (module + ".py")
     if not path.is_file():
-        raise SystemExit("update-detect-table: missing %s; --data-dir must point "
-                         "inside a ucs-detect checkout" % path)
+        raise SystemExit(
+            f"update-detect-table: missing {path}; "
+            "--data-dir must point inside a ucs-detect checkout")
     spec = importlib.util.spec_from_file_location("_ttyscan_" + module, str(path))
     loaded = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loaded)
     return getattr(loaded, variable)[0][1]
 
 
-def build_rows(runs, data_dir):
-    """Return one row per terminal with the probe widths that were measured for it."""
+def select_runs(runs):
+    """Return current-version runs and the names of the skipped ones."""
     usable, skipped = [], []
     for run in runs:
         version = run.get("wcwidth_version")
@@ -102,21 +104,24 @@ def build_rows(runs, data_dir):
                 and run.get("unicode_version")):
             usable.append(run)
         else:
-            skipped.append((run.get("_file", run.get("software_name")), version))
-    unicode_versions = {run.get("unicode_version") for run in usable}
-    if len(unicode_versions) != 1:
-        raise SystemExit("update-detect-table: mixed Unicode versions %r"
-                         % (sorted(unicode_versions),))
+            skipped.append((run.get("source_file", run.get("software_name")), version))
+    return usable, skipped
 
-    failed, expected, category, total = {}, {}, {}, defaultdict(int)
-    for run in usable:
+
+def collect_measurements(runs):
+    """Return failed widths, expected widths, probe categories, and test totals."""
+    failed, expected, category = {}, {}, {}
+    total = defaultdict(int)
+    for run in runs:
         name = run["software_name"]
         version = run.get("wcwidth_version")
-        for category_name, _module, _variable in CATEGORIES:
-            for body in ((run.get("test_results") or {}).get(category_name) or {}).values():
+        for category_name, _, _ in CATEGORIES:
+            results = (run.get("test_results") or {}).get(category_name) or {}
+            for body in results.values():
+                body = body or {}
                 total[(name, category_name)] = max(
-                    total[(name, category_name)], (body or {}).get("n_total") or 0)
-                for record in (body or {}).get("failed_codepoints") or []:
+                    total[(name, category_name)], body.get("n_total") or 0)
+                for record in body.get("failed_codepoints") or []:
                     grapheme = decode_wchar(record["wchar"])
                     failed[(name, grapheme)] = record["measured_by_terminal"]
                     category[grapheme] = category_name
@@ -124,17 +129,59 @@ def build_rows(runs, data_dir):
                         (version, grapheme), record["measured_by_wcwidth"])
                     if width != record["measured_by_wcwidth"]:
                         raise SystemExit(
-                            "update-detect-table: wcwidth disagrees on %r in %r: %r vs %r"
-                            % (grapheme, version, width,
-                               record["measured_by_wcwidth"]))
+                            "update-detect-table: wcwidth disagrees on "
+                            f"{grapheme!r} in {version!r}: {width!r} vs "
+                            f"{record['measured_by_wcwidth']!r}")
+    return failed, expected, category, total
 
-    width_ranks = {}
+
+def load_width_ranks(data_dir):
+    """Return each width table as a map from grapheme to its ranked index."""
+    ranks = {}
     for category_name, module, variable in CATEGORIES:
         table = load_width_table(data_dir, module, variable)
-        width_ranks[category_name] = {
+        ranks[category_name] = {
             (chr(entry) if isinstance(entry, int) else entry): index
             for index, entry in enumerate(table)
         }
+    return ranks
+
+
+def build_row(run, probes, measured_width):
+    """Return one quiz row for *run*, or ``None`` when it is excluded."""
+    name = run["software_name"]
+    if name in EXCLUDE:
+        print(f"excluding {name}", file=sys.stderr)
+        return None
+    version = run.get("wcwidth_version")
+    values = {}
+    for grapheme in probes:
+        if not usable_probe(grapheme):
+            continue
+        width = measured_width(name, grapheme, version)
+        if width is not None:
+            values[grapheme] = width
+    results = run.get("terminal_results") or {}
+    return {
+        "name": name,
+        "da1": parse_da1((results.get("device_attributes") or {}).get("raw") or ""),
+        "values": values,
+        "primary": not (results.get("software_method") in ("XTVERSION", "ENQ")
+                        or unique_tn(run)),
+    }
+
+
+def build_rows(runs, data_dir):
+    """Return one row per terminal with the probe widths that were measured for it."""
+    usable, skipped = select_runs(runs)
+    unicode_versions = {run.get("unicode_version") for run in usable}
+    if len(unicode_versions) != 1:
+        raise SystemExit(
+            "update-detect-table: mixed Unicode versions "
+            f"{sorted(unicode_versions)!r}")
+
+    failed, expected, category, total = collect_measurements(usable)
+    width_ranks = load_width_ranks(data_dir)
 
     def measured_width(name, grapheme, version):
         if (name, grapheme) in failed:
@@ -145,28 +192,8 @@ def build_rows(runs, data_dir):
             return None
         return expected.get((version, grapheme))
 
-    rows = []
-    for run in usable:
-        results = run.get("terminal_results") or {}
-        name = run["software_name"]
-        if name in EXCLUDE:
-            print("excluding %s" % name, file=sys.stderr)
-            continue
-        version = run.get("wcwidth_version")
-        values = {}
-        for grapheme in category:
-            if not usable_probe(grapheme):
-                continue
-            width = measured_width(name, grapheme, version)
-            if width is not None:
-                values[grapheme] = width
-        rows.append({
-            "name": name,
-            "da1": parse_da1((results.get("device_attributes") or {}).get("raw") or ""),
-            "values": values,
-            "primary": not (results.get("software_method") in ("XTVERSION", "ENQ")
-                            or unique_tn(run)),
-        })
+    rows = [build_row(run, category, measured_width) for run in usable]
+    rows = [row for row in rows if row is not None]
     if len({row["name"] for row in rows}) != len(rows):
         raise SystemExit("update-detect-table: duplicate terminal name")
     return prune_shadows(rows), skipped, expected
@@ -189,30 +216,36 @@ def usable_probe(grapheme):
     return True
 
 
-def choose_probes(rows):
-    """Cover every pair of same DA1 terminals with the fewest measured probes."""
+def da1_pairs(rows):
+    """Return index pairs of terminals sharing a DA1 reply signature."""
     groups = defaultdict(list)
     for index, row in enumerate(rows):
         groups[row["da1"]].append(index)
-    remaining = []
+    pairs = []
     for members in groups.values():
-        remaining.extend(itertools.combinations(members, 2))
+        pairs.extend(itertools.combinations(members, 2))
+    return pairs
 
+
+def choose_probes(rows):
+    """Cover every pair of same DA1 terminals with the fewest measured probes."""
+    remaining = da1_pairs(rows)
     candidates = {grapheme for row in rows for grapheme in row["values"]}
     order, unseparated = [], []
     while remaining:
-        best = None
+        best = (None, None, [])
         for grapheme in candidates:
             covered = [(a, b) for a, b in remaining
-                       if grapheme in rows[a]["values"] and grapheme in rows[b]["values"]
+                       if grapheme in rows[a]["values"]
+                       and grapheme in rows[b]["values"]
                        and rows[a]["values"][grapheme] != rows[b]["values"][grapheme]]
             if not covered:
                 continue
             emoji = 0 if len(grapheme) > 1 else 1
             score = (len(covered), -emoji, len(grapheme), grapheme)
-            if best is None or score > best[0]:
+            if best[0] is None or score > best[0]:
                 best = (score, grapheme, covered)
-        if best is None:
+        if best[0] is None:
             unseparated = [(rows[a]["name"], rows[b]["name"]) for a, b in remaining]
             break
         _, grapheme, covered = best
@@ -223,21 +256,17 @@ def choose_probes(rows):
 
 
 def prune_shadows(rows):
-    """Drop rows that only make a measurable terminal ambiguous.
-
-    A terminal that normally identifies itself is useful in the quiz only when
-    probes separate it from every measurable terminal that shares its DA1.
-    """
+    """Drop rows that only make a measurable terminal ambiguous."""
     groups = {row["da1"] for row in rows if row["primary"]}
     selected = [row for row in rows
                 if row["primary"] or row["da1"] in groups]
     while True:
-        _probes, unseparated = choose_probes(selected)
+        _, unseparated = choose_probes(selected)
         by_name = {row["name"]: row for row in selected}
         drop = set()
         for first, second in unseparated:
             pair = ((first, by_name[first]), (second, by_name[second]))
-            if all(row["primary"] for _name, row in pair):
+            if all(row["primary"] for _, row in pair):
                 continue
             drop.update(name for name, row in pair if not row["primary"])
         if not drop:
@@ -246,6 +275,7 @@ def prune_shadows(rows):
 
 
 def source_note(data_dir, runs, probe_count, terminal_count):
+    """Return the generated-block header naming the data commit and counts."""
     commit, dirty = "unversioned", ""
     try:
         commit = subprocess.check_output(
@@ -258,29 +288,30 @@ def source_note(data_dir, runs, probe_count, terminal_count):
             dirty = ", working tree modified"
     except (OSError, subprocess.CalledProcessError):
         pass
-    return "ucs-detect data @ %s%s: %d runs, %d terminals, %d probes" % (
-        commit, dirty, len(runs), terminal_count, probe_count)
+    return (f"ucs-detect data @ {commit}{dirty}: {len(runs)} runs, "
+            f"{terminal_count} terminals, {probe_count} probes")
 
 
 def render_block(rows, probes, note):
+    """Return the generated block text for *rows*, *probes*, and *note*."""
     lines = [
         START,
         "# " + note,
-        "_TERM_PROBES = (",
+        "TERM_PROBES = (",
     ]
     for probe in probes:
-        lines.append("    %s," % ascii(probe))
+        lines.append(f"    {ascii(probe)},")
     lines.extend([
         ")",
         "",
-        "_TERM_QUIZ = (",
+        "TERM_QUIZ = (",
     ])
     for row in sorted(rows, key=lambda item: (item["da1"], item["name"])):
         widths = {index: row["values"][probe]
                   for index, probe in enumerate(probes) if probe in row["values"]}
-        inner = ", ".join("%d: %d" % (index, widths[index]) for index in sorted(widths))
-        lines.append("    (%r," % (row["da1"],))
-        lines.append("     %s, {%s})," % (ascii(row["name"]), inner))
+        inner = ", ".join(f"{index}: {widths[index]}" for index in sorted(widths))
+        lines.append(f"    TerminalProfile({ascii(row['name'])},")
+        lines.append(f"                    {row['da1']!r}, {{{inner}}}),")
     lines.append(")")
     lines.append(END)
     return "\n".join(lines)
@@ -293,14 +324,15 @@ def replace_block(text, block):
 
 
 def main(argv=None):
+    """Regenerate or check the embedded quiz block and return an exit status."""
     parser = argparse.ArgumentParser(
         prog="update-detect-table.py",
         description="Regenerate the terminal quiz embedded in ttyscan.py",
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA,
-                        help="ucs-detect data directory (default: %(default)s)")
+                        help=f"ucs-detect data directory (default: {DEFAULT_DATA})")
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET,
-                        help="file holding the generated block (default: %(default)s)")
+                        help=f"file holding the generated block (default: {DEFAULT_TARGET})")
     parser.add_argument("--check", action="store_true",
                         help="fail if the block is out of date")
     args = parser.parse_args(argv)
@@ -308,13 +340,13 @@ def main(argv=None):
     runs = load_runs(args.data_dir)
     rows, skipped, expected = build_rows(runs, args.data_dir)
     for filename, version in skipped:
-        print("skipping %s: wcwidth %s" % (filename, version), file=sys.stderr)
+        print(f"skipping {filename}: wcwidth {version}", file=sys.stderr)
     probes, unseparated = choose_probes(rows)
     if unseparated:
-        print("warning: cannot separate %r" % (unseparated,), file=sys.stderr)
+        print(f"warning: cannot separate {unseparated!r}", file=sys.stderr)
     note = source_note(args.data_dir,
                        [run for run in runs
-                        if run.get("_file") not in {name for name, _ in skipped}],
+                        if run.get("source_file") not in {name for name, _ in skipped}],
                        len(probes), len(rows))
     block = render_block(rows, probes, note)
 
@@ -322,13 +354,13 @@ def main(argv=None):
     updated = replace_block(text, block)
     if args.check:
         if updated != text:
-            print("%s is out of date; run %s" % (args.target, sys.argv[0]),
+            print(f"{args.target} is out of date; run {sys.argv[0]}",
                   file=sys.stderr)
             return 1
         return 0
     args.target.write_text(updated, encoding="utf-8")
-    print("updated %s: %d terminals, %d probes, %d graphemes"
-          % (args.target, len(rows), len(probes), len(expected)))
+    print(f"updated {args.target}: {len(rows)} terminals, {len(probes)} probes, "
+          f"{len(expected)} graphemes")
     return 0
 
 
