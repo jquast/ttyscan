@@ -178,14 +178,12 @@ If both are silent it sends DA1 (``CSI c``), which all terminals reply with a se
 set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
 *ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
 
-For example, Apple Terminal does not answer XTVERSION or ENQ, and ``ssh`` forwards ``TERM``, it does
-not forward ``TERM_PROGRAM``, making the terminal unidentifiable. Further, its DA1 reply, ``CSI ? 1
-; 2 c``, is not unique, matching several table entries. It is then identified by its unicode quirks,
-like that it draws the detective emoji, ``U+1F575 U+1F3FF U+200D U+2642 U+FE0F`` as five columns
-instead of 2. These "quiz tables" are generated automatically from data collected by ucs-detect_.
+For example, Apple's Terminal.app may be remotely identified even though it does not answer
+``XTVERSION`` or ``ENQ``, although it does export ``TERM_PROGRAM``, ssh does not forward it.
+Further, its DA1 reply is not unique, and so it is identified only by its unicode "quirks".
 
-The table and its probes are embedded in ttyscan.py_, generated from ucs-detect_'s collected data by
-``tox -e update``.
+These "quiz tables" are generated automatically from data collected by ucs-detect_, by
+command ``tox -e update``. 
 
 Details
 -------
