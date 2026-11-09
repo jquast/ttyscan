@@ -3,25 +3,18 @@
 ttyscan
 =======
 
-*ttyscan* queries a terminal emulator for its type, size and capabilities, creating a
-curses-compatible `terminfo(5)`_ file entry if necessary, and exports any corrected values of
-``TERM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` environment variables.
+*ttyscan* queries a terminal emulator for its type, size and capabilities, creates a
+curses-compatible `terminfo(5)`_ entry when needed, and exports corrected ``TERM``, ``COLORTERM``,
+``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` values.
 
 Problem
 -------
 
-ncurses_ does not support XTGETTCAP, and so `terminfo(5)`_ files for some terminals must be
-deployed to remote systems by system operators in some circumstances.
-
-Curses programs fail to start until those files are deployed or an alternate ``TERM`` is exported.
-All kinds of errors and warnings may be raised until this is done, some examples::
+ncurses_ has no XTGETTCAP support, so `terminfo(5)`_ entries for some terminals must be deployed to
+remote systems by hand. Until then, curses programs fail to start::
 
        $ tmux attach
        missing or unsuitable terminal: xterm-kitty
-
-       $ irssi
-       setupterm() failed for TERM=xterm-kitty: 0
-       Can't initialize screen handling.
 
        $ htop
        Error opening terminal: xterm-kitty.
@@ -31,20 +24,13 @@ All kinds of errors and warnings may be raised until this is done, some examples
          File "<string>", line 1, in <module>
        _curses.error: setupterm: could not find terminal
 
-       $ git log -p
-       WARNING: terminal is not fully functional
-       Press RETURN to continue 
-
 Solution
 --------
 
-*ttyscan* creates the missing `terminfo(5)` file using the ``XTGETTCAP`` (``DCS +q``) terminal query
-protocol when supported, and suggests a new ``TERMINFO`` environment value for export, allowing
-legacy calls to curses of `setupterm(3)`_ to succeed::
+*ttyscan* builds the missing `terminfo(5)`_ entry from the ``XTGETTCAP`` (``DCS +q``) query
+protocol and exports ``TERMINFO`` so that `setupterm(3)`_ succeeds::
 
        $ ttyscan -vft
-       ttyscan: probing terminal via XTGETTCAP ...
-       ttyscan: size via dual CPR: 28x100
        ttyscan: XTGETTCAP supported, terminal: rio; received 198 caps (11 bool, 5 num, 178 str) in 4ms
        ttyscan: writing /home/jq/.config/ttyscan/terminfo/r/rio
        export COLORTERM=truecolor
@@ -52,12 +38,9 @@ legacy calls to curses of `setupterm(3)`_ to succeed::
        export LINES=28
        export COLUMNS=100
        export TERMINFO=/home/jq/.config/ttyscan/terminfo
-       export TERMCAP='rio|XTGETTCAP-discovered terminal::am::ut::hs::km::5i::mi::ms::NP::xn::Co#256::co#80::it#8::li#24::pa#32767::ac=``aaffggiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~::bl=^G::mb=\E[5m::md=\E[1m::bt=\E[Z::vi=\E[?25l::cl=\E[H\E[2J::ve=\E[?12l\E[?25h::cr=\r::cs=\E[%i%p1%d;%p2%dr::le=\b::DO=\E[%p1%dB::do=\n::nd=\E[C::cm=\E[%i%p1%d;%p2%dH::up=\E[A::vs=\E[?12;25h::dC=\E[P::mh=\E[2m::dl=\E[M::ds=\E]2;^G::ec=\E[%p1%dX::cd=\E[J::ce=\E[K::cb=\E[1K::vb=\E[?5h$<100/>\E[?5l::fs=^G::ho=\E[H::ch=\E[%i%p1%dG::ta=\t::st=\EH::al=\E[L::sf=\n::mk=\E[8m::is=\E[!p\E[?3;4l\E[4l\E>::K2=\EOE::kb=^?::kB=\E[Z::kl=\EOD::kd=\EOB::kr=\EOC::ku=\EOA::kD=\E[3~::@7=\EOF::@8=\EOM::k1=\EOP::k0=\E[21~::F1=\E[23~::F2=\E[24~::k2=\EOQ::k3=\EOR::k4=\EOS::k5=\E[15~::k6=\E[17~::k7=\E[18~::k8=\E[19~::k9=\E[20~::kh=\EOH::kI=\E[2~::kH=\E[1;2B::kN=\E[6~::kP=\E[5~::ps=\E[i::pf=\E[4i::po=\E[5i::op=\E[39;49m::rp=%p1%c\E[%p2%{1}%-%db::mr=\E[7m::sr=\EM::ZR=\E[23m::ae=\E(B::te=\E[?1049l\E[23;0;0t::ei=\E[4l::ke=\E[?1l\E>::se=\E[27m::ue=\E[24m::r1=\Ec\E]104^G::r2=\E[!p\E[?3;4l\E[4l\E>::sa=%?%p9%t\E(0%e\E(B%;\E[0%?%p6%t;1%;%?%p5%t;2%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;%?%p7%t;8%;m::me=\E(B\E[m::ZH=\E[3m::as=\E(0::ti=\E[?1049h\E[22;0;0t::im=\E[4h::ks=\E[?1h\E=::so=\E[7m::us=\E[4m::ct=\E[3g::ts=\E]2;::cv=\E[%i%p1%dd:'
+       export TERMCAP='rio|XTGETTCAP-discovered terminal::am::ut::hs::km::5i::mi::ms::NP::xn::Co#256::...'
 
        $ eval `ttyscan`
-
-       $ echo $TERM, $TERMINFO
-       rio, /home/jquast/.config/ttyscan/terminfo
 
        $ file -b $TERMINFO/r/rio
        Compiled terminfo entry "rio"
@@ -65,12 +48,14 @@ legacy calls to curses of `setupterm(3)`_ to succeed::
        $ python -c 'import curses;curses.setupterm()'; echo $?
        0
 
+The ``TERMCAP`` value above is abbreviated; *ttyscan* emits all 198 capabilities.
+
 CLI Arguments
 -------------
 
 ::
 
-    usage: ttyscan [-h] [-v] [-f] [-t]
+    usage: ttyscan [-h] [-v] [-f] [-t] [--version]
 
     Export terminal capabilities discovered via XTGETTCAP
 
@@ -82,23 +67,8 @@ CLI Arguments
       --version      show program's version number and exit
 
 *ttyscan* saves a `terminfo(5)`_ file to $XDG_CONFIG_HOME/ttyscan/terminfo or
-~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
-previous executions, unless ``--force`` argument is used.
-
-When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* asks the terminal to name itself.
-It reads an ``XTVERSION`` reply; if that is silent it sends ``ENQ`` and takes the answerback; if both
-are silent it measures the DA1 reply and the grapheme cluster widths that the remaining candidates
-were actually measured on. Only an exact match against the generated table is exported from the
-measurement. A terminal that normally identifies itself is in the table only when a probe
-separates it from every measured terminal that shares its DA1. urxvt's default ENQ answerback is
-its DA response, ``ESC [ ? 1 ; 2 c``; *ttyscan* maps that answerback to urxvt. Some terminals
-answer ENQ after the CPR fence, so *ttyscan* reads briefly past it before giving up. The table is
-generated from ucs-detect's collected data by ``tox -e update``.
-
-Typical total execution time is under 200ms.  Every query uses a following cursor position report
-(CPR) sequence to test for negative response (no support), so the timeout elapses for terminal
-automation (such as tcl/expect pexpect) that acts as a terminal but is not one. The default timeout
-is set by environment value, ``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in second.
+~/.config/ttyscan/terminfo, and reuses it on later executions unless ``--force`` is given. A run
+takes under 200ms.
 
 Installation
 ------------
@@ -109,115 +79,106 @@ Installation
 
 *ttyscan* requires Python3.6+.
 
-ttyscan.py_ is a stand-alone python file, it does not require pip to install, you can copy this
-single file directly from source and execute it from source, eg. ``python ~/bin/ttyscan.py``
+ttyscan.py_ is a stand-alone file: copy it from source and run it directly, for example
+``python ~/bin/ttyscan.py``.
 
 Motive
 ------
 
-Naturally, transferring your ``$HOME/.terminfo`` folder to a remote machine is the best solution.
+Copying ``$HOME/.terminfo`` to the remote machine is the best solution. Enterprise systems, bastion
+hosts, cloud consoles, hypervisors, radio, and serial ports make that transfer difficult, and the
+usual workaround of exporting ``TERM=xterm`` loses keyboard and screen features or corrupts output.
 
-However, enterprise systems, bastion hosts, cloud systems, web consoles, hypervisors, radio, and
-serial ports can be challenging places or protocol layers through which to deploy terminfo files.
-
-Some workarounds include exporting a generally-compatible ``TERM=xterm-256color`` or ``xterm`` with
-sometimes minor corruption of screen output, missed interpretation of keyboard input such as
-backspace or delete, or a small reduction of features such as italic or underlined text or number of
-colors.
-
-**And so this tool is not often needed** except for the **very serious** terminal connoisseur.
-
-It serves as a demonstration: that a full terminal capability database *can* be transferred using
-XTGETTCAP_ for many modern terminals.  My hope is that ncurses_ and `setupterm(3)`_ could negotiate
-with full XTGETTCAP_ support at some point in the future, and that this utility is not commonly used
-or required!
+*ttyscan* demonstrates that a full terminal capability database transfers over XTGETTCAP_. My hope
+is that ncurses_ and `setupterm(3)`_ negotiate it directly one day, and this tool retires.
 
 Scope
 -----
 
-At time of this writing (May 2026), the ucs-detect_ dataset of 42 terminals shows three categories
-of support for ``XTGETTCAP``:
+At time of this writing (November 2026), the ucs-detect_ dataset of 42 terminals falls into these
+``XTGETTCAP`` categories:
 
-- **Full** ``XTGETTCAP`` capability support: contour_, foot_, ghostty_, kitty_, rio_, and wezterm_
-  transmit their complete terminfo boolean, numeric, and string capabilities via XTGETTCAP_.
+- **Full**: AbsoluteTelnet/SSH, Bobcat, contour_, foot_, ghostty_, iTerm2, kitty_, rio_, WezTerm_,
+  and XTerm.NET report screen, numeric, and string capabilities sufficient to build a terminfo
+  entry. *ttyscan* produces terminfo files for these, and may also discover ``TERM`` from ``TN``
+  and ``COLORTERM=truecolor`` from ``RGB``.
 
-  *ttyscan* produces terminfo files for only these terminals.  *ttyscan* may also discover a
-  preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from ``RGB``.
+- **Partial**: GNOME Terminal, mlterm, TeraTerm, Terminator, XFCE Terminal, and XTerm_ report
+  ``TN``, ``Co``, ``RGB``, and a handful of keyboard sequences. *ttyscan* exports ``TERM`` from
+  ``TN`` and ``COLORTERM`` from ``RGB``, and builds no terminfo entry. With XTerm_, try the
+  ubiquitous ``TERM=xterm-256color``.
 
-- **Partial** ``XTGETTCAP`` capability support: XTerm_, iterm2, mlterm, AbsoluteTelnet/SSH, GNOME
-  Terminal, LXTerminal, terminator, termit, and xfce4-terminal report only ``TN``, ``Co``, and
-  ``RGB``.
+- **No Support**: alacritty (refuses: `alacritty/vte#98`_), Extraterm, Hyper, Konsole (requested:
+  `KDE#507017`_), libvterm, linux fbdev, mintty, pterm, QTerminal, rxvt-unicode, screen, securecrt,
+  st, SyncTERM, Tabby, Terminal.exe (planned: `microsoft/terminal#17735`_), terminology, tmux
+  (passthrough: `tmux/tmux#3755`_), VS Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), Warp,
+  weston-terminal, Zellij, and zutty.
 
-  *ttyscan* may only discover preferred ``TERM`` from ``TN``, and ``COLORTERM=truecolor`` from
-  ``RGB``.
-
-  XTerm_ supports only keyboard sequences in addition to ``TN``, ``Co``, and ``RGB``. It does not
-  report *all* capabilities, and so a `terminfo(5)`_ entry cannot be built. However,
-  ``TERM=xterm-256color`` and ``TERM=xterm`` are the most ubiquitous terminal name, you should be
-  just fine.
-
-- **No Support**: alacritty (refuses: `alacritty/vte#98`_), bobcat, cmd.exe, 
-  Extraterm, Hyper, Konsole (requested: `KDE#507017`_), linux fbdev, mintty, 
-  rxvt-unicode, screen, securecrt, st, Tabby, Terminal.exe (planned:
-  `microsoft/terminal#17735`_), terminology, tmux (passthrough: `tmux/tmux#3755`_), libvterm, VS
-  Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), weston-terminal, and zutty.
-
-- **Non-Compliant**: ConEmu, cool-retro-term, Apple Terminal, PuTTY, QTerminal: When a terminal emulator
-  does not support XTGETTCAP, it **should** silently consume VT100 Mode DCS queries without answer.
-
-  However, some non-compliant terminals display XTGETTCAP query output, eg. ``+q544e+q524742+q636f6c6f7273+q626c696e6b+..``
-  visually: QTerminal, cool-retro-term, and qtermwidget (`fixed upstream <https://github.com/lxqt/qtermwidget/pull/644>`_), 
-  PuTTY, ConEmu.exe, and Apple's Terminal.app all fail to parse DCS queries, displaying raw sequence output.
+- **Non-Compliant**: ConEmu, cool-retro-term, and Apple Terminal print raw query text such as
+  ``+q544e+q524742+q636f6c6f7273`` on screen, where the specification asks for silent consumption
+  of VT100 Mode DCS queries. QTerminal (`fixed upstream
+  <https://github.com/lxqt/qtermwidget/pull/644>`_) and PuTTY now ignore the query.
 
 Architecture
 ------------
 
-*ttyscan* uses the following,
+- ``XTGETTCAP`` field ``TN`` corrects ``TERM``.
+- ``XTGETTCAP`` field ``RGB`` corrects ``COLORTERM``.
+- ``XTGETTCAP`` supplies all available keyboard and screen capability strings.
+- DEC Private Mode 2048 (In-Band Resize) reports the window size; the Cursor Position Report
+  sequence from XTerm's `resize.c <https://github.com/joejulian/xterm/blob/master/resize.c>`_
+  serves as the fallback.
+- DECRQSS_ (Request Setting Selection) probes truecolor support by setting and querying a 24-bit
+  background color when ``RGB`` is unavailable.
 
-- ``XTGETTCAP`` field ``TN`` is used to correct ``TERM`` when unmatched.
-- ``XTGETTCAP`` field ``RGB`` is used to correct ``COLORTERM`` when unmatched.
-- all capability strings, keyboard and screen, when provided by ``XTGETTCAP``.
-- DEC Private Mode 2048 (In-Band Resize) to determine the window size
-- Or failing that, using Cursor Position Report sequence like done in XTerm's `resize.c
-  <https://github.com/joejulian/xterm/blob/master/resize.c>`_
-- DECRQSS_ (Request Setting Selection) to probe truecolor support when ``RGB`` is unavailable,
-  by setting and querying a 24-bit background color
+Terminal identification
+-----------------------
+
+When ``TERM_PROGRAM`` is unset or ``--force`` is given, *ttyscan* asks the terminal to name itself,
+trying three methods in order. Identification writes ``TERM_PROGRAM`` and
+``TERM_PROGRAM_VERSION``; ``TERM`` comes from ``TN``.
+
+XTVERSION (``CSI > q``) answers with ``DCS > | name version ST``.
+
+When XTVERSION is silent, ``ENQ`` (``0x05``) returns the printable answerback, for example
+``Extraterm 0.81.4``, whose trailing token holding a digit becomes ``TERM_PROGRAM_VERSION``.
+urxvt's default answerback is its DA response, ``ESC [ ? 1 ; 2 c``, which *ttyscan* maps to urxvt.
+Some terminals answer past the CPR fence, so *ttyscan* reads a further 50ms.
+
+When ENQ is silent, *ttyscan* measures. DA1 (``CSI c``) reports a service class and a set of
+extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``; the extensions are unordered, so the table
+compares them as a set. For terminals sharing that DA1, *ttyscan* draws grapheme clusters whose
+column widths differ between terminals, narrowing candidates until one remains. Only an exact
+match against the embedded table is exported, and an ambiguous measurement exports nothing. A
+terminal that normally identifies itself another way joins the table only when a probe separates
+it from every measured terminal sharing its DA1.
+
+The table and probes are embedded in ttyscan.py_, generated from ucs-detect_'s collected width
+data by ``tox -e update``.
 
 Details
 -------
 
-The difference of *Full* and *Partial* ``XTGETTCAP`` support is best described by foot_:
+``XTGETTCAP`` support varies by terminal. foot_ describes the protocol best: XTerm_ queries
+keyboard keys plus three custom capabilities, ``TN`` (terminal name), ``Co`` (number of colors),
+and ``RGB`` (bits per color channel, with different semantics from the file-based ``RGB``
+capability). Kitty queries all integer and string capabilities, and foot adds boolean capabilities
+for a complete terminfo over the wire.
 
-  ``XTGETTCAP`` is an escape sequence initially introduced by XTerm_, and also implemented (and extended,
-  to some degree) by Kitty.
- 
-  Applications using this feature do not need to use the classic, file-based, terminfo definition.
- 
-  XTerm's implementation (as of XTerm-370) only supports querying key (as in keyboard keys)
-  capabilities, and three custom capabilities:
-  
-  ``TN`` - terminal name
-  ``Co`` - number of colors (alias for the colors capability)
-  ``RGB`` - number of bits per color channel (different semantics from the RGB capability in file-based
-  terminfo definitions!).
- 
-  Kitty has extended this, and also supports querying all integer and string capabilities.
- 
-  Foot supports this, and extends it even further, to also include boolean capabilities.
-  This means foot's entire terminfo can be queried via ``XTGETTCAP``.
+All of ``TERM``, ``COLORTERM``, ``LINES``, and ``COLUMNS`` go missing across some transports:
 
-Further, all of ``TERM``, ``COLORTERM``, ``LINES``, or ``COLUMNS`` may not be transmitted by all
-software or protocols, some examples:
+- ssh forwards ``COLORTERM`` only with ``SendEnv`` in `ssh_config(5)`_ and ``AcceptEnv`` in
+  `sshd_config(5)`_.
+- serial forwards none; the host `agetty(8)`_ configuration defines ``TERM``.
+- rlogin forwards all but ``COLORTERM``.
+- telnet forwards all, with IAC NAWS and NEW-ENVIRON support varying by software.
+- websocket forwards none without customization, common for in-browser terminals.
 
-- ssh does not forward ``COLORTERM`` unless configured using ``SendEnv`` in `ssh_config(5)`_ and
-  ``AcceptEnv`` in `sshd_config(5)`_.
-- serial does not forward any; ``TERM`` is defined by host `agetty(8)`_ configuration, for example.
-- rlogin can forward all but ``COLORTERM``.
-- telnet can forward all, but IAC NAWS and NEW-ENVIRON capability varies by software.
-- websocket cannot forward any without customization, often used in-browser.
+*ttyscan* re-exports a corrected value whenever one is unset or differs.
 
-*ttyscan* detects when these variables are unset or do not match values and re-exports the corrected
-values when they differ.
+Every query ends with a Cursor Position Report (CPR) that tests for a negative response, so the
+timeout elapses for terminal automation such as tcl/expect pexpect. Set the timeout with
+``TTYSCAN_QUERY_TIMEOUT=10.0`` (float, seconds).
 
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
@@ -233,7 +194,6 @@ values when they differ.
 .. _`setupterm(3)`: https://linux.die.net/man/3/setupterm
 .. _`ssh_config(5)`: https://linux.die.net/man/5/ssh_config
 .. _`sshd_config(5)`: https://linux.die.net/man/5/sshd_config
-.. _`termcap(5)`: https://linux.die.net/man/5/termcap
 .. _`terminfo(5)`: https://linux.die.net/man/5/terminfo
 .. _`tmux/tmux#3755`: https://github.com/tmux/tmux/issues/3755
 .. _`ttyscan.py`: https://github.com/jquast/ttyscan/blob/master/ttyscan.py
