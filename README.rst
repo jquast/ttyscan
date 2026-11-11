@@ -3,10 +3,10 @@
 ttyscan
 =======
 
-*ttyscan* queries a terminal emulator for its type, size and capabilities, creating a
+*ttyscan* queries a terminal emulator for its type, size, capabilities, and identity. Creating a
 curses-compatible `terminfo(5)`_ file entry if necessary, and exports any corrected values of
-``TERM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP`` (`termcap(5)`_)
-environment variables.
+``TERM``, ``TERM_PROGRAM``, ``COLORTERM``, ``LINES``, ``COLUMNS``, and optionally ``TERMCAP``
+(`termcap(5)`_) environment variables.
 
 Problem
 -------
@@ -82,7 +82,7 @@ CLI Arguments
 ~/.config/ttyscan/terminfo, and does not re-query or re-create it when it already exists from
 previous executions, unless ``--force`` is used.
 
-Typical total execution time is under 200ms.
+Typical total execution time for remote shells is under 200ms.
 
 Installation
 ------------
@@ -91,10 +91,10 @@ Installation
 
    pip install ttyscan
 
-*ttyscan* requires Python3.6+.
+*ttyscan* requires Python3.6 or newer.
 
-ttyscan.py_ is a stand-alone python file, it does not require pip to install, you can copy this
-single file directly from source and execute it from source, eg. ``python ~/bin/ttyscan.py``
+ttyscan.py_ is a **stand-alone python file**, it does not require pip to install, you can copy this
+file from source and execute it directly, eg. ``python ~/bin/ttyscan.py``
 
 Motive
 ------
@@ -109,10 +109,14 @@ sometimes minor corruption of screen output, missed interpretation of keyboard i
 backspace or delete, or a small reduction of features such as italic or underlined text or number of
 colors.
 
-It serves as a demonstration: that a full terminal capability database *can* be transferred using
-XTGETTCAP_ for many modern terminals.  My hope is that ncurses_ and `setupterm(3)`_ could negotiate
-with full XTGETTCAP_ support at some point in the future, and that this utility is not commonly used
-or required!
+ttyscan.py_ serves as a demonstration: that a full terminal capability database *can* be transferred
+using XTGETTCAP_ for many modern terminals. Further, by use of data collected by ucs-detect_,
+terminals that do not respond to XTVERSION or ENQ inquires can be identified by their unique
+fingerprints of DA1 response and their unicode terminal width "quirks".
+
+My hope is that ncurses_ and `setupterm(3)`_ could someday negotiate with full XTGETTCAP_ support at
+some point in the future, so that remote deployment of terminfo files are not necessary, and that
+this utility would not be used or required!
 
 Scope
 -----
@@ -142,15 +146,14 @@ categories of support for ``XTGETTCAP``:
   `KDE#507017`_), libvterm, linux fbdev, mintty, pterm, QTerminal, rxvt-unicode, screen, securecrt,
   st, SyncTERM, Tabby, Terminal.exe (planned: `microsoft/terminal#17735`_), terminology, tmux
   (passthrough: `tmux/tmux#3755`_), VS Code (xterm.js, proposal: `xtermjs/xterm.js#4107`_), Warp,
-  weston-terminal, Zellij, and zutty.
+  weston-terminal, Zellij, and zutty, QTerminal (leaky sequence `fixed upstream
+  <https://github.com/lxqt/qtermwidget/pull/644>`_).
 
 - **Non-Compliant**: ConEmu, cool-retro-term, and Apple Terminal: When a terminal emulator does not
-  support XTGETTCAP, it **should** silently consume VT100 Mode DCS queries without answer. QTerminal
-  (`fixed upstream <https://github.com/lxqt/qtermwidget/pull/644>`_) and PuTTY now ignore the query.
-
-  However, these terminals display XTGETTCAP query output, eg.
-  ``+q544e+q524742+q636f6c6f7273+q626c696e6b+..`` visually: cool-retro-term, ConEmu.exe, and
-  Apple's Terminal.app fail to parse DCS queries, displaying raw sequence output.
+  support XTGETTCAP, it **should** silently consume VT100 Mode DCS queries without answer.  However,
+  these terminals display XTGETTCAP query output, eg.
+  ``+q544e+q524742+q636f6c6f7273+q626c696e6b+..`` is visibly written to screen: cool-retro-term,
+  ConEmu.exe, and Apple's Terminal.app all fail to parse DCS queries in this way.
 
 Architecture
 ------------
@@ -165,25 +168,6 @@ Architecture
   <https://github.com/joejulian/xterm/blob/master/resize.c>`_
 - DECRQSS_ (Request Setting Selection) to probe truecolor support when ``RGB`` is unavailable,
   by setting and querying a 24-bit background color
-
-Terminal identification
------------------------
-
-When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to identify it:
-
-- using ``XTVERSION`` and reply (``CSI > q``, answered ``DCS > | name version ST``)
-- using ``ENQ`` (``0x05``) and takes the printable answerback
-
-If both are silent it sends DA1 (``CSI c``), which all terminals reply with a service class and a
-set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
-*ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
-
-For example, Apple's Terminal.app may be remotely identified even though it does not answer
-``XTVERSION`` or ``ENQ``, although it does export ``TERM_PROGRAM``, ssh does not forward it.
-Further, its DA1 reply is not unique, and so it is identified only by its unicode "quirks".
-
-These "quiz tables" are generated automatically from data collected by ucs-detect_, by
-command ``tox -e update``. 
 
 Details
 -------
@@ -224,7 +208,23 @@ values when they differ.
 Every query uses a following cursor position report (CPR) sequence to test for negative response
 (no support), so the timeout elapses for terminal automation (such as tcl/expect pexpect) that acts
 as a terminal but is not one. The default timeout is set by environment value,
-``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in second.
+``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in seconds.
+
+When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to identify it:
+
+- using ``XTVERSION`` and reply (``CSI > q``, answered ``DCS > | name version ST``)
+- using ``ENQ`` (``0x05``) and takes the printable answerback
+
+If both are silent it sends DA1 (``CSI c``), which all terminals reply with a service class and a
+set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
+*ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
+
+For example, Apple's Terminal.app may be remotely identified even though it does not answer
+``XTVERSION`` or ``ENQ``, although it does export ``TERM_PROGRAM``, ssh does not forward it.
+Further, its DA1 reply is not unique, and so it is identified only by its unicode "quirks".
+
+These "quiz tables" are generated automatically from data collected by ucs-detect_, by
+command ``tox -e update``. 
 
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98

@@ -446,6 +446,16 @@ def test_probe_truecolor(original, probed, expected, verbose_msg):
             mock_verbose.assert_called_with(verbose_msg)
 
 
+def test_probe_truecolor_restores_sgr_when_the_probe_fails():
+    """A missing reply still restores the original SGR."""
+    with patch('ttyscan.decqss_query', side_effect=['0', NoCPRReply("x")]), \
+            patch('ttyscan.write_all') as mock_write_all:
+        with pytest.raises(NoCPRReply):
+            probe_truecolor(3, 0.25)
+
+    mock_write_all.assert_any_call(3, '\x1b[0m')
+
+
 def test_main_help():
     result = subprocess.run(
         [sys.executable, "-m", "ttyscan", "--help"],
@@ -669,6 +679,64 @@ def test_detect_size(decrpm, resize_report, cpr, expected):
         mock_write_all.assert_any_call(3, '\x1b8')
         if decrpm != 2:
             mock_read_until.assert_not_called()
+
+
+@pytest.mark.parametrize("abort_at", [1, 2])
+def test_detect_size_resets_inband_when_the_fence_is_missing(abort_at):
+    """A missing fence still resets mode 2048."""
+    from ttyscan import detect_size, RE_CPR
+
+    early = "\x1b[48;31;128;0;0t\x1b[31;128R"
+    fenced = (re.search(RE_CPR, early), early)
+    missing = NoCPRReply("no cursor position report")
+    returns = [missing] if abort_at == 1 else [fenced, missing]
+
+    with patch('ttyscan.decrqm_query', return_value=2), \
+            patch('ttyscan.read_until', side_effect=returns), \
+            patch('ttyscan.write_all') as mock_write_all, \
+            patch('ttyscan.verbose'):
+        with pytest.raises(NoCPRReply):
+            detect_size(3, (128, 31))
+
+    mock_write_all.assert_called_once_with(3, '\x1b[?2048l')
+
+
+def test_query_initial_caps_restores_cursor_when_the_reply_fails():
+    """A missing fence still restores the saved cursor."""
+    from ttyscan import query_initial_caps
+
+    with patch('ttyscan.xtgettcap_query', side_effect=NoCPRReply("x")), \
+            patch('ttyscan.write_all') as mock_write_all:
+        with pytest.raises(NoCPRReply):
+            query_initial_caps(3)
+
+    mock_write_all.assert_any_call(3, '\x1b8\x1b[K')
+
+
+def test_full_capabilities_restores_cursor_when_the_reply_fails():
+    """A missing fence still restores the saved cursor."""
+    from ttyscan import full_capabilities
+
+    with patch('ttyscan.xtgettcap_query', side_effect=NoCPRReply("x")), \
+            patch('ttyscan.write_all') as mock_write_all:
+        with pytest.raises(NoCPRReply):
+            full_capabilities(3, {}, 0)
+
+    mock_write_all.assert_any_call(3, '\x1b8\x1b[K')
+
+
+def test_detect_size_restores_cursor_when_the_cpr_fails():
+    """A missing cursor report still restores the saved cursor."""
+    from ttyscan import detect_size
+
+    with patch('ttyscan.decrqm_query', return_value=None), \
+            patch('ttyscan.read_cpr', side_effect=NoCPRReply("x")), \
+            patch('ttyscan.write_all') as mock_write_all, \
+            patch('ttyscan.verbose'):
+        with pytest.raises(NoCPRReply):
+            detect_size(3, (128, 31))
+
+    mock_write_all.assert_any_call(3, '\x1b8')
 
 
 @pytest.mark.parametrize("late,expected", [
