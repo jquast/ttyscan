@@ -548,8 +548,10 @@ def probe_truecolor(fd, timeout):
         verbose("DECRQSS not supported by this terminal")
         return False
     write_all(fd, '\x1b[48:2:1:2:3m')
-    probed = decqss_query(fd, 'm', timeout)
-    write_all(fd, f'\x1b[{original}m')
+    try:
+        probed = decqss_query(fd, 'm', timeout)
+    finally:
+        write_all(fd, f'\x1b[{original}m')
     if probed is None:
         verbose("DECRQSS probe query failed")
         return False
@@ -564,9 +566,11 @@ def detect_size(fd, winsize, timeout=TTYSCAN_QUERY_TIMEOUT):
     """Return ``(rows, cols, source)`` from an in-band resize or a CPR probe."""
     has_inband = decrqm_query(fd, 2048, timeout) == 2
     if has_inband:
-        cpr, data = read_until(fd, ['\x1b[?2048h'], RE_CPR.pattern, timeout)
-        reports = RE_RESIZE.findall(data[:cpr.start()])
-        write_all(fd, '\x1b[?2048l')
+        try:
+            cpr, data = read_until(fd, ['\x1b[?2048h'], RE_CPR.pattern, timeout)
+            reports = RE_RESIZE.findall(data[:cpr.start()])
+        finally:
+            write_all(fd, '\x1b[?2048l')
         # read_until writes the \x1b[6n, so the reset and its fence go out together;
         # a resize the terminal handled before the reset sits ahead of the reply.
         fence, data = read_until(fd, [], RE_CPR.pattern, timeout)
@@ -577,8 +581,10 @@ def detect_size(fd, winsize, timeout=TTYSCAN_QUERY_TIMEOUT):
             return rows, cols, 'inband'
 
     write_all(fd, '\x1b7\x1b[1000;1000H')
-    size = read_cpr(fd, timeout, minimum=winsize)
-    write_all(fd, '\x1b8')
+    try:
+        size = read_cpr(fd, timeout, minimum=winsize)
+    finally:
+        write_all(fd, '\x1b8')
 
     if size is None:
         verbose("size detection failed")
@@ -730,9 +736,10 @@ def has_meaningful_caps(str_caps, num_caps, bool_caps):
 def query_initial_caps(fd):
     """Return the opening XTGETTCAP capabilities and the reply count."""
     write_all(fd, '\x1b7')
-    caps, answered = xtgettcap_query(fd, INIT_XTGETTCAP_CAPS)
-    write_all(fd, '\x1b8\x1b[K')
-    return caps, answered
+    try:
+        return xtgettcap_query(fd, INIT_XTGETTCAP_CAPS)
+    finally:
+        write_all(fd, '\x1b8\x1b[K')
 
 
 def terminal_program_exports(fd, force):
@@ -800,8 +807,10 @@ def full_capabilities(fd, init_caps, init_answered):
                  if cap not in INIT_XTGETTCAP_CAPS]
     start = time.monotonic()
     write_all(fd, '\x1b7')
-    caps, answered = xtgettcap_query(fd, remaining)
-    write_all(fd, '\x1b8\x1b[K')
+    try:
+        caps, answered = xtgettcap_query(fd, remaining)
+    finally:
+        write_all(fd, '\x1b8\x1b[K')
     elapsed_ms = int((time.monotonic() - start) * 1000)
     check_xtgettcap_replies(init_answered, len(INIT_XTGETTCAP_CAPS),
                             answered, len(remaining))
