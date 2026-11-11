@@ -170,6 +170,11 @@ Architecture
   by setting and querying a 24-bit background color and exporting ``COLORTERM`` if successful
 - DA1_ response is received and Unicode widths are probed to identify ``TERM_PROGRAM``.
 
+Every query uses a following cursor position report (CPR) sequence to test for negative response
+(no support), so the timeout elapses for terminal automation (such as tcl/expect pexpect) that acts
+as a terminal but is not one. The default timeout is set by environment value,
+``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in seconds.
+
 Full vs. Partial XTGETTCAP
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -211,11 +216,6 @@ values when they differ.
 
 Terminal Identification
 ~~~~~~~~~~~~~~~~~~~~~~~
-
-Every query uses a following cursor position report (CPR) sequence to test for negative response
-(no support), so the timeout elapses for terminal automation (such as tcl/expect pexpect) that acts
-as a terminal but is not one. The default timeout is set by environment value,
-``TTYSCAN_QUERY_TIMEOUT=10.0`` (float) in seconds.
 
 When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to identify it:
 
