@@ -21,7 +21,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.9"
+__version__ = "0.0.10"
 
 VERBOSE = False
 
