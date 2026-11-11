@@ -112,7 +112,7 @@ colors.
 ttyscan.py_ serves as a demonstration: that a full terminal capability database *can* be transferred
 using XTGETTCAP_ for many modern terminals. Further, by use of data collected by ucs-detect_,
 terminals that do not respond to XTVERSION or ENQ inquires can be identified by their unique
-fingerprints of DA1 response and their unicode terminal width "quirks".
+fingerprints of DA1_ response and their unicode terminal width "quirks".
 
 My hope is that ncurses_ and `setupterm(3)`_ could someday negotiate with full XTGETTCAP_ support at
 some point in the future, so that remote deployment of terminfo files are not necessary, and that
@@ -163,14 +163,15 @@ Architecture
 - ``XTGETTCAP`` field ``TN`` is used to correct ``TERM`` when unmatched.
 - ``XTGETTCAP`` field ``RGB`` is used to correct ``COLORTERM`` when unmatched.
 - all capability strings, keyboard and screen, when provided by ``XTGETTCAP``.
-- DEC Private Mode 2048 (In-Band Resize) to determine the window size
-- Or failing that, using Cursor Position Report sequence like done in XTerm's `resize.c
+- DEC Private Mode 2048 (In-Band Resize) to determine ``COLUMNS`` and ``LINES``
+- Or failing that, using Cursor Position Report like XTerm's `resize.c
   <https://github.com/joejulian/xterm/blob/master/resize.c>`_
 - DECRQSS_ (Request Setting Selection) to probe truecolor support when ``RGB`` is unavailable,
-  by setting and querying a 24-bit background color
+  by setting and querying a 24-bit background color and exporting ``COLORTERM`` if successful
+- DA1_ response is received and Unicode widths are probed to identify ``TERM_PROGRAM``.
 
-Details
--------
+Full vs. Partial XTGETTCAP
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The difference of *Full* and *Partial* ``XTGETTCAP`` support is best described by foot_:
 
@@ -192,6 +193,9 @@ The difference of *Full* and *Partial* ``XTGETTCAP`` support is best described b
   Foot supports this, and extends it even further, to also include boolean capabilities.
   This means foot's entire terminfo can be queried via ``XTGETTCAP``.
 
+Forwarding of Environment Variables
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Further, all of ``TERM``, ``COLORTERM``, ``LINES``, or ``COLUMNS`` may not be transmitted by all
 software or protocols, some examples:
 
@@ -205,6 +209,9 @@ software or protocols, some examples:
 *ttyscan* detects when these variables are unset or do not match values and re-exports the corrected
 values when they differ.
 
+Terminal Identification
+~~~~~~~~~~~~~~~~~~~~~~~
+
 Every query uses a following cursor position report (CPR) sequence to test for negative response
 (no support), so the timeout elapses for terminal automation (such as tcl/expect pexpect) that acts
 as a terminal but is not one. The default timeout is set by environment value,
@@ -215,13 +222,13 @@ When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to i
 - using ``XTVERSION`` and reply (``CSI > q``, answered ``DCS > | name version ST``)
 - using ``ENQ`` (``0x05``) and takes the printable answerback
 
-If both are silent it sends DA1 (``CSI c``), which all terminals reply with a service class and a
+If both are silent it sends DA1_ (``CSI c``), which all terminals reply with a service class and a
 set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
 *ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
 
 For example, Apple's Terminal.app may be remotely identified even though it does not answer
 ``XTVERSION`` or ``ENQ``, although it does export ``TERM_PROGRAM``, ssh does not forward it.
-Further, its DA1 reply is not unique, and so it is identified only by its unicode "quirks".
+Further, its DA1_ reply is not unique, and so it is identified only by its unicode "quirks".
 
 These "quiz tables" are generated automatically from data collected by ucs-detect_, by
 command ``tox -e update``. 
@@ -230,6 +237,7 @@ command ``tox -e update``.
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
 .. _contour: https://github.com/contour-terminal/contour
 .. _DECRQSS: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95
+.. _DA1: https://vt100.net/docs/vt510-rm/DA1.html
 .. _foot: https://codeberg.org/dnkl/foot#xtgettcap
 .. _ghostty: https://mitchellh.com/writing/ghostty-devlog-004
 .. _`KDE#507017`: https://bugs.kde.org/show_bug.cgi?id=507017
