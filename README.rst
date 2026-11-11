@@ -231,7 +231,11 @@ For example, Apple's Terminal.app may be remotely identified even though it does
 Further, its DA1_ reply is not unique, and so it is identified only by its unicode "quirks".
 
 These "quiz tables" are generated automatically from data collected by ucs-detect_, by
-command ``tox -e update``. 
+command ``tox -e update``.  At time of this writing (November 2026) this allows identifying the
+following terminals that otherwise do not identify themselves:
+
+    alacritty, ConEmu, cool-retro-term, Extraterm, Hyper, libvterm, QTerminal, securecrt, st, Tabby,
+    TeraTerm, weston-terminal, WindowsTerminal, zutty.
 
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
