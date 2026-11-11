@@ -224,7 +224,8 @@ When ``TERM_PROGRAM`` is unset (or ``--force`` is used), *ttyscan* attempts to i
 
 If both are silent it sends DA1_ (``CSI c``), which all terminals reply with a service class and a
 set of extension numbers such as ``CSI ? 62 ; 4 ; 9 ; 22 c``. When that DA1 response is not unique,
-*ttyscan* draws complex grapheme clusters, narrowing the candidates until one remains.
+*ttyscan* draws complex grapheme clusters (complex unicode strings), narrowing the unique "quirks"
+of a terminal's unicode measurements by Cursor Position Response until one remains.
 
 For example, Apple's Terminal.app may be remotely identified even though it does not answer
 ``XTVERSION`` or ``ENQ``, although it does export ``TERM_PROGRAM``, ssh does not forward it.
