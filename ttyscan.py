@@ -21,7 +21,7 @@ try:
 except ImportError as exc:
     sys.exit(f"ttyscan: unsupported platform (missing required module: {exc})")
 
-__version__ = "0.0.10"
+__version__ = "0.0.11"
 
 VERBOSE = False
 
@@ -143,46 +143,49 @@ class TerminalProfile:
 
 
 # BEGIN GENERATED TERMINAL QUIZ: update-detect-table.py
-# ucs-detect data @ 2cb6c59: 40 runs, 15 terminals, 5 probes
+# ucs-detect data @ 50636cec: 43 runs, 16 terminals, 6 probes
 TERM_PROBES = (
     '\U0001f575\U0001f3ff\u200d\u2642\ufe0f',
+    '\u20c4',
     '\U0001faf1\U0001f3ff\u200d\U0001faf2\U0001f3fe',
     '\U0001f1ff',
-    '\u1c8a',
+    '\u20c1',
     '\u17d8',
 )
 
 TERM_QUIZ = (
     TerminalProfile('Apple_Terminal',
-                    ('?', 1, (2,)), {0: 5, 1: 9, 2: 1, 3: 1, 4: 1}),
+                    ('?', 1, (2,)), {0: 5, 1: 1, 2: 9, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('ConEmu',
-                    ('?', 1, (2,)), {0: 6, 1: 9, 2: 2}),
+                    ('?', 1, (2,)), {0: 6, 2: 9, 3: 2}),
     TerminalProfile('Extraterm',
-                    ('?', 1, (2,)), {0: 6, 1: 9, 2: 1, 3: 1, 4: 1}),
+                    ('?', 1, (2,)), {0: 6, 1: 1, 2: 9, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('Hyper',
-                    ('?', 1, (2,)), {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
+                    ('?', 1, (2,)), {0: 4, 1: 1, 2: 6, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('QTerminal',
-                    ('?', 1, (2,)), {0: 4, 1: 8, 2: 1, 3: 0, 4: 1}),
+                    ('?', 1, (2,)), {0: 4, 1: 0, 2: 8, 3: 1, 4: 0, 5: 1}),
     TerminalProfile('TeraTerm',
-                    ('?', 1, (2,)), {0: 1, 2: 1}),
+                    ('?', 1, (2,)), {0: 1, 3: 1}),
     TerminalProfile('cool-retro-term',
-                    ('?', 1, (2,)), {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+                    ('?', 1, (2,)), {0: 4, 1: 0, 2: 8, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('libvterm',
-                    ('?', 1, (2,)), {0: 11, 1: 14, 2: 2, 3: 1, 4: 1}),
+                    ('?', 1, (2,)), {0: 11, 1: 1, 2: 14, 3: 2, 4: 1, 5: 1}),
+    TerminalProfile('urxvt',
+                    ('?', 1, (2,)), {0: 4, 1: 1, 2: 8, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('alacritty',
-                    ('?', 6, ()), {0: 4, 2: 1, 3: 1, 4: 2}),
+                    ('?', 6, ()), {0: 4, 1: 1, 3: 1, 4: 1, 5: 2}),
     TerminalProfile('st',
-                    ('?', 6, ()), {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+                    ('?', 6, ()), {0: 4, 1: 1, 2: 8, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('weston-terminal',
-                    ('?', 6, ()), {0: 6, 1: 9, 2: 1}),
+                    ('?', 6, ()), {0: 6, 2: 9, 3: 1}),
     TerminalProfile('WindowsTerminal',
-                    ('?', 61, (4, 6, 7, 14, 21, 22, 23, 24, 28, 32, 42, 52)), {2: 1}),
+                    ('?', 61, (4, 6, 7, 14, 21, 22, 23, 24, 28, 32, 42, 52)), {3: 1}),
     TerminalProfile('securecrt',
-                    ('?', 62, (1, 2, 6, 7, 8, 9)), {0: 4, 1: 6, 2: 1}),
+                    ('?', 62, (1, 2, 6, 7, 8, 9)), {0: 4, 2: 6, 3: 1}),
     TerminalProfile('Tabby',
-                    ('?', 62, (4, 9, 22)), {0: 4, 1: 6, 2: 1, 3: 1, 4: 1}),
+                    ('?', 62, (4, 9, 22)), {0: 4, 1: 1, 2: 6, 3: 1, 4: 1, 5: 1}),
     TerminalProfile('zutty',
-                    ('?', 64, (1, 9, 15, 21, 22)), {0: 4, 1: 8, 2: 1, 3: 1, 4: 1}),
+                    ('?', 64, (1, 9, 15, 21, 22)), {0: 4, 1: 1, 2: 8, 3: 1, 4: 1, 5: 1}),
 )
 # END GENERATED TERMINAL QUIZ
 

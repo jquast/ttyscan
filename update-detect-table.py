@@ -26,6 +26,13 @@ CATEGORIES = (
 # Multiplexers can relay host DA1 and widths, and so are unreliable for this purpose
 EXCLUDE = frozenset({"GNU Screen", "tmux", "Zellij"})
 
+# for indistinguishable terminals, currently only alacritty vs. otty, we just pick one over the
+# other, this means otty gets misidentified as alacritty. There are probably more protocols that
+# otty supports that could uniquely identify it, but this experimental project doesn't go so far.
+PRIORITY = (
+    "alacritty",
+)
+
 START = "# BEGIN GENERATED TERMINAL QUIZ: update-detect-table.py"
 END = "# END GENERATED TERMINAL QUIZ"
 
@@ -196,7 +203,7 @@ def build_rows(runs, data_dir):
     rows = [row for row in rows if row is not None]
     if len({row["name"] for row in rows}) != len(rows):
         raise SystemExit("update-detect-table: duplicate terminal name")
-    return prune_shadows(rows), skipped, expected
+    return resolve_ambiguities(prune_shadows(rows)), skipped, expected
 
 
 def usable_probe(grapheme):
@@ -274,6 +281,26 @@ def prune_shadows(rows):
         selected = [row for row in selected if row["name"] not in drop]
 
 
+def resolve_ambiguities(rows):
+    """Keep the highest priority terminal of each pair the quiz cannot separate."""
+    while True:
+        _, unseparated = choose_probes(rows)
+        if not unseparated:
+            return rows
+        drop = set()
+        for first, second in unseparated:
+            ranked = [name for name in PRIORITY if name in (first, second)]
+            if not ranked:
+                raise SystemExit(
+                    f"update-detect-table: {first!r} and {second!r} are "
+                    "ambiguous; add one of them to PRIORITY")
+            kept = ranked[0]
+            print(f"ambiguous {first} and {second}: keeping {kept}",
+                  file=sys.stderr)
+            drop.update(name for name in (first, second) if name != kept)
+        rows = [row for row in rows if row["name"] not in drop]
+
+
 def source_note(data_dir, runs, probe_count, terminal_count):
     """Return the generated-block header naming the data commit and counts."""
     commit, dirty = "unversioned", ""
@@ -341,9 +368,7 @@ def main(argv=None):
     rows, skipped, expected = build_rows(runs, args.data_dir)
     for filename, version in skipped:
         print(f"skipping {filename}: wcwidth {version}", file=sys.stderr)
-    probes, unseparated = choose_probes(rows)
-    if unseparated:
-        print(f"warning: cannot separate {unseparated!r}", file=sys.stderr)
+    probes, _ = choose_probes(rows)
     note = source_note(args.data_dir,
                        [run for run in runs
                         if run.get("source_file") not in {name for name, _ in skipped}],

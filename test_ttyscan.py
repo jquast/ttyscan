@@ -1315,10 +1315,10 @@ def test_detect_terminal_every_row(da1, name, widths):
 
 def test_detect_terminal_splits_conemu_from_extraterm():
     """A standalone regional indicator is what separates ConEmu from Extraterm."""
-    widths = {0: 6, 1: 9, 2: 1}
+    profile = next(item for item in TERM_QUIZ if item.name == 'Extraterm')
 
     def fake_width(fd, probe, timeout):
-        return widths[TERM_PROBES.index(probe)]
+        return profile.widths[TERM_PROBES.index(probe)]
 
     with patch('ttyscan.da1_query', return_value=('?', 1, (2,))), \
             patch('ttyscan.probe_width', side_effect=fake_width):
@@ -1586,11 +1586,11 @@ def test_generator_build_rows_keeps_only_tested_probes(tmp_path):
     data_dir = fake_data_dir(tmp_path)
     runs = [
         fake_run("Short", "\x1b[?1;2c", {"PROBE-A": 8}, n_total=1),
-        fake_run("Full", "\x1b[?1;2c", {"PROBE-A": 8, "PROBE-B": 5}),
+        fake_run("Full", "\x1b[?1;2c", {"PROBE-A": 2, "PROBE-B": 5}),
     ]
     rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert rows[0]["values"] == {"PROBE-A": 8}
-    assert rows[1]["values"] == {"PROBE-A": 8, "PROBE-B": 5}
+    assert rows[1]["values"] == {"PROBE-A": 2, "PROBE-B": 5}
 
 
 def test_generator_build_rows_reads_a_tested_sri_probe(tmp_path):
@@ -1633,6 +1633,46 @@ def test_generator_build_rows_drops_an_unresolvable_shadow(tmp_path):
     ]
     rows, skipped, expected = generator.build_rows(runs, data_dir)
     assert [row["name"] for row in rows] == ["Primary"]
+
+
+def test_generator_build_rows_prefers_a_priority_terminal(tmp_path, capsys):
+    """An indistinguishable terminal yields to the priority name."""
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    runs = [
+        fake_run("alacritty", "\x1b[?6c", {"PROBE-A": 2, "PROBE-B": 2}),
+        fake_run("OTTY", "\x1b[?6c", {"PROBE-A": 2, "PROBE-B": 2}),
+    ]
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
+    assert [row["name"] for row in rows] == ["alacritty"]
+    assert "OTTY" in capsys.readouterr().err
+
+
+def test_generator_build_rows_rejects_an_unseparated_pair_without_priority(tmp_path):
+    generator = load_generator()
+    data_dir = fake_data_dir(tmp_path)
+    runs = [
+        fake_run("First", "\x1b[?6c", {"PROBE-A": 2}),
+        fake_run("Second", "\x1b[?6c", {"PROBE-A": 2}),
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        generator.build_rows(runs, data_dir)
+    assert "First" in str(excinfo.value)
+    assert "Second" in str(excinfo.value)
+    assert "PRIORITY" in str(excinfo.value)
+
+
+def test_generator_build_rows_ranks_priority_names(tmp_path, monkeypatch):
+    """The earliest name in the priority list is kept."""
+    generator = load_generator()
+    monkeypatch.setattr(generator, "PRIORITY", ("Second", "First"))
+    data_dir = fake_data_dir(tmp_path)
+    runs = [
+        fake_run("First", "\x1b[?6c", {"PROBE-A": 2}),
+        fake_run("Second", "\x1b[?6c", {"PROBE-A": 2}),
+    ]
+    rows, skipped, expected = generator.build_rows(runs, data_dir)
+    assert [row["name"] for row in rows] == ["Second"]
 
 
 def test_generator_usable_probe():
@@ -1734,8 +1774,8 @@ def test_generator_main_writes_and_checks(tmp_path):
     assert generator.main(args + ["--check"]) == 1
 
 
-def test_generator_main_warns_about_unseparable_terminals(tmp_path, capsys):
-    """Unseparable terminals are reported on stderr."""
+def test_generator_main_rejects_unseparable_terminals(tmp_path):
+    """An ambiguity outside the priority list is a hard error."""
     import yaml
     generator = load_generator()
     data_dir = fake_data_dir(tmp_path)
@@ -1746,11 +1786,10 @@ def test_generator_main_warns_about_unseparable_terminals(tmp_path, capsys):
 
     target = tmp_path / "ttyscan.py"
     target.write_text("head\n%s\n%s\ntail\n" % (generator.START, generator.END))
-    assert generator.main(["--data-dir", str(data_dir),
-                           "--target", str(target)]) == 0
-    assert "cannot separate" in capsys.readouterr().err
-    text = target.read_text()
-    assert "'A'" in text and "'B'" in text
+    with pytest.raises(SystemExit) as excinfo:
+        generator.main(["--data-dir", str(data_dir), "--target", str(target)])
+    assert "PRIORITY" in str(excinfo.value)
+    assert generator.START in target.read_text()
 
 
 def test_generator_load_runs_rejects_empty_directory(tmp_path):
