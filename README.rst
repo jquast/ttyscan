@@ -236,7 +236,7 @@ command ``tox -e update``.  At time of this writing (November 2026) this allows 
 following terminals that otherwise do not identify themselves:
 
     alacritty, ConEmu, cool-retro-term, Extraterm, Hyper, libvterm, QTerminal, securecrt, st, Tabby,
-    TeraTerm, weston-terminal, WindowsTerminal, zutty.
+    TeraTerm, weston-terminal, WindowsTerminal, zutty, rxvt.
 
 .. _`agetty(8)`: https://linux.die.net/man/8/agetty
 .. _`alacritty/vte#98`: https://github.com/alacritty/vte/issues/98
